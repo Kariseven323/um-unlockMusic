@@ -402,6 +402,16 @@ func (p *processor) process(inputFile string, allDec []common.DecoderFactory) er
 		}
 	}
 
+	// 用文件名信息包装元数据，确保标题准确性
+	if p.updateMetadata {
+		if params.Meta != nil {
+			params.Meta = common.WrapMetaWithFilename(params.Meta, filepath.Base(inputFile))
+		} else {
+			// 如果元数据获取失败，直接使用文件名元数据
+			params.Meta = common.ParseFilenameMeta(filepath.Base(inputFile))
+		}
+	}
+
 	if p.updateMetadata && params.Meta != nil {
 		if coverGetter, ok := dec.(common.CoverImageGetter); ok {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

@@ -4,11 +4,12 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"go.uber.org/zap"
 	"io"
 	"os"
 	"os/exec"
 	"strings"
+
+	"go.uber.org/zap"
 
 	"unlock-music.dev/cli/algo/common"
 	"unlock-music.dev/cli/internal/utils"
@@ -100,7 +101,7 @@ func updateMetaFFmpeg(ctx context.Context, outPath string, params *UpdateMetadat
 	}
 
 	title := params.Meta.GetTitle()
-	if album != "" {
+	if title != "" {
 		out.AddMetadata("", "title", title)
 	}
 
