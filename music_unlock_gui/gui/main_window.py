@@ -350,11 +350,11 @@ class MusicUnlockGUI:
             self.file_tree.set(item, "状态", "等待")
             self.file_tree.set(item, "进度", "0%")
         
-        # 开始处理
+        # 开始处理（使用批处理模式）
         output_mode = self.output_mode_var.get()
         output_dir = self.output_dir if output_mode == OUTPUT_MODE_CUSTOM else None
 
-        self.thread_manager.start_processing(
+        self.thread_manager.start_batch_processing(
             self.file_list,
             output_dir,
             self.processor,
@@ -400,36 +400,70 @@ class MusicUnlockGUI:
         """处理来自工作线程的消息"""
         msg_type = message.get('type')
         file_path = message.get('file_path')
-        
+
         # 查找对应的树项
         item_id = None
-        for item in self.file_tree.get_children():
-            if self.file_tree.item(item, 'text') == file_path:
-                item_id = item
-                break
-        
+        if file_path:
+            for item in self.file_tree.get_children():
+                if self.file_tree.item(item, 'text') == file_path:
+                    item_id = item
+                    break
+
         if msg_type == 'progress':
             if item_id:
                 self.file_tree.set(item_id, "状态", "处理中")
                 self.file_tree.set(item_id, "进度", f"{message.get('progress', 0)}%")
-        
+
         elif msg_type == 'success':
             if item_id:
                 self.file_tree.set(item_id, "状态", "完成")
                 self.file_tree.set(item_id, "进度", "100%")
-        
+
         elif msg_type == 'error':
             if item_id:
                 self.file_tree.set(item_id, "状态", "失败")
                 self.file_tree.set(item_id, "进度", "错误")
-        
+
         elif msg_type == 'all_complete':
             self.processing = False
             self.start_button.config(state="normal")
             self.stop_button.config(state="disabled")
             self.update_status("转换完成")
             messagebox.showinfo("完成", "所有文件转换完成！")
-        
+
+        # 批处理模式消息处理
+        elif msg_type == 'batch_start':
+            total_files = message.get('total_files', 0)
+            self.update_status(f"开始批处理 {total_files} 个文件...")
+
+        elif msg_type == 'file_complete':
+            if item_id:
+                success = message.get('success', False)
+                if success:
+                    self.file_tree.set(item_id, "状态", "完成")
+                    self.file_tree.set(item_id, "进度", "100%")
+                else:
+                    self.file_tree.set(item_id, "状态", "失败")
+                    self.file_tree.set(item_id, "进度", "错误")
+
+        elif msg_type == 'batch_complete':
+            self.processing = False
+            self.start_button.config(state="normal")
+            self.stop_button.config(state="disabled")
+            success_count = message.get('success_count', 0)
+            failed_count = message.get('failed_count', 0)
+            total_time = message.get('total_time', 0)
+            self.update_status(f"批处理完成：成功 {success_count} 个，失败 {failed_count} 个")
+            messagebox.showinfo("完成", f"批处理完成！\n成功：{success_count} 个\n失败：{failed_count} 个\n耗时：{total_time}ms")
+
+        elif msg_type == 'batch_error':
+            self.processing = False
+            self.start_button.config(state="normal")
+            self.stop_button.config(state="disabled")
+            error_msg = message.get('error', '批处理失败')
+            self.update_status(f"批处理错误：{error_msg}")
+            messagebox.showerror("错误", f"批处理失败：{error_msg}")
+
         # 更新总体进度
         self.update_overall_progress()
     

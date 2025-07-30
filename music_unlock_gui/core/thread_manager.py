@@ -92,6 +92,36 @@ class ThreadManager:
             daemon=True
         )
         monitor_thread.start()
+
+    def start_batch_processing(self, file_list: List[str], output_dir: str = None,
+                              processor=None, message_queue: queue.Queue = None,
+                              use_source_dir: bool = False):
+        """
+        开始批处理模式处理文件列表（使用Go的批处理API）
+
+        Args:
+            file_list: 要处理的文件列表
+            output_dir: 输出目录（可选）
+            processor: 文件处理器实例
+            message_queue: 消息队列，用于向GUI线程发送状态更新
+            use_source_dir: 是否使用源文件目录作为输出目录
+        """
+        if self.processing:
+            self.logger.warning("已有处理任务在运行")
+            return
+
+        self.processing = True
+        self.stop_event.clear()
+
+        self.logger.info(f"开始批处理模式处理 {len(file_list)} 个文件")
+
+        # 使用单个线程执行批处理
+        future = threading.Thread(
+            target=self._process_batch,
+            args=(file_list, output_dir, processor, message_queue, use_source_dir),
+            daemon=True
+        )
+        future.start()
     
     def _process_single_file(self, file_path: str, output_dir: str = None,
                            processor=None, message_queue: queue.Queue = None,
@@ -286,3 +316,78 @@ class ThreadManager:
             'active_threads': self.get_active_count(),
             'max_workers': self.max_workers
         }
+
+    def _process_batch(self, file_list: List[str], output_dir: str = None,
+                      processor=None, message_queue: queue.Queue = None,
+                      use_source_dir: bool = False):
+        """
+        批处理模式处理文件列表
+
+        Args:
+            file_list: 要处理的文件列表
+            output_dir: 输出目录（可选）
+            processor: 文件处理器实例
+            message_queue: 消息队列
+            use_source_dir: 是否使用源文件目录
+        """
+        try:
+            if self.stop_event.is_set():
+                return
+
+            self.logger.info(f"开始批处理 {len(file_list)} 个文件")
+
+            # 发送开始消息
+            if message_queue:
+                message_queue.put({
+                    'type': 'batch_start',
+                    'total_files': len(file_list)
+                })
+
+            # 调用批处理方法
+            response = processor.process_files_batch(
+                file_list,
+                output_dir,
+                use_source_dir
+            )
+
+            if self.stop_event.is_set():
+                return
+
+            # 发送结果消息
+            if message_queue:
+                if response.get('success', True):
+                    # 发送每个文件的结果
+                    for result in response.get('results', []):
+                        message_queue.put({
+                            'type': 'file_complete',
+                            'file_path': result.get('input_path', ''),
+                            'success': result.get('success', False),
+                            'error': result.get('error', ''),
+                            'process_time': result.get('process_time_ms', 0)
+                        })
+
+                    # 发送完成消息
+                    message_queue.put({
+                        'type': 'batch_complete',
+                        'success_count': response.get('success_count', 0),
+                        'failed_count': response.get('failed_count', 0),
+                        'total_time': response.get('total_time_ms', 0)
+                    })
+                else:
+                    # 发送错误消息
+                    message_queue.put({
+                        'type': 'batch_error',
+                        'error': response.get('error', '批处理失败')
+                    })
+
+            self.logger.info("批处理完成")
+
+        except Exception as e:
+            self.logger.error(f"批处理异常: {str(e)}")
+            if message_queue:
+                message_queue.put({
+                    'type': 'batch_error',
+                    'error': f"批处理异常: {str(e)}"
+                })
+        finally:
+            self.processing = False

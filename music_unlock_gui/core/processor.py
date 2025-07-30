@@ -304,3 +304,88 @@ class FileProcessor:
         else:
             # 使用用户指定的目录
             return output_dir
+
+    def process_files_batch(self, file_list: list, output_dir: str = None,
+                           use_source_dir: bool = False) -> dict:
+        """
+        批量处理多个音乐文件（使用Go的批处理模式）
+
+        Args:
+            file_list: 要处理的文件列表
+            output_dir: 输出目录路径（可选）
+            use_source_dir: 是否使用源文件目录作为输出目录
+
+        Returns:
+            dict: 批处理结果
+        """
+        import json
+
+        try:
+            # 构建批处理请求
+            batch_request = {
+                "files": [],
+                "options": {
+                    "remove_source": False,
+                    "update_metadata": True,
+                    "overwrite_output": True,
+                    "skip_noop": True
+                }
+            }
+
+            # 添加文件任务
+            for file_path in file_list:
+                task = {"input_path": file_path}
+
+                if not use_source_dir and output_dir:
+                    task["output_path"] = output_dir
+
+                batch_request["files"].append(task)
+
+            self.logger.info(f"开始批处理 {len(file_list)} 个文件")
+
+            # 调用批处理模式
+            cmd = [self.um_exe_path, "--batch"]
+
+            result = subprocess.run(
+                cmd,
+                input=json.dumps(batch_request),
+                capture_output=True,
+                text=True,
+                encoding='utf-8',
+                errors='ignore',
+                timeout=PROCESS_TIMEOUT_SECONDS * len(file_list),  # 根据文件数量调整超时
+                **self._get_subprocess_kwargs()
+            )
+
+            if result.returncode == 0:
+                # 解析批处理响应
+                response = json.loads(result.stdout)
+                self.logger.info(f"批处理完成: 成功 {response.get('success_count', 0)}, "
+                               f"失败 {response.get('failed_count', 0)}, "
+                               f"耗时 {response.get('total_time_ms', 0)}ms")
+                return response
+            else:
+                error_msg = result.stderr or result.stdout or '未知错误'
+                self.logger.error(f"批处理失败: {error_msg}")
+                return {
+                    "success": False,
+                    "error": error_msg,
+                    "results": []
+                }
+
+        except subprocess.TimeoutExpired:
+            error_msg = f"批处理超时（超过{PROCESS_TIMEOUT_SECONDS * len(file_list)}秒）"
+            self.logger.error(error_msg)
+            return {
+                "success": False,
+                "error": error_msg,
+                "results": []
+            }
+        except Exception as e:
+            error_msg = f"批处理异常: {str(e)}"
+            self.logger.error(error_msg)
+            return {
+                "success": False,
+                "error": error_msg,
+                "results": []
+            }

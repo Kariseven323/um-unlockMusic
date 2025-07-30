@@ -1,0 +1,11 @@
+{
+  "files": [
+    {"input_path": "test.mflac", "output_path": "output"}
+  ],
+  "options": {
+    "remove_source": false,
+    "update_metadata": false,
+    "overwrite_output": true,
+    "skip_noop": true
+  }
+}

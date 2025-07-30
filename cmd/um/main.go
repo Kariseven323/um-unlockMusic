@@ -28,6 +28,7 @@ import (
 	_ "unlock-music.dev/cli/algo/xiami"
 	_ "unlock-music.dev/cli/algo/ximalaya"
 	"unlock-music.dev/cli/internal/ffmpeg"
+	"unlock-music.dev/cli/internal/pool"
 	"unlock-music.dev/cli/internal/sniff"
 	"unlock-music.dev/cli/internal/utils"
 )
@@ -58,6 +59,7 @@ func main() {
 			&cli.BoolFlag{Name: "update-metadata", Usage: "update metadata & album art from network", Required: false, Value: false},
 			&cli.BoolFlag{Name: "overwrite", Usage: "overwrite output file without asking", Required: false, Value: false},
 			&cli.BoolFlag{Name: "watch", Usage: "watch the input dir and process new files", Required: false, Value: false},
+			&cli.BoolFlag{Name: "batch", Usage: "batch processing mode (read JSON from stdin)", Required: false, Value: false},
 
 			&cli.BoolFlag{Name: "supported-ext", Usage: "show supported file extensions and exit", Required: false, Value: false},
 		},
@@ -107,13 +109,18 @@ func setupLogger(verbose bool) *zap.Logger {
 
 	return zap.New(zapcore.NewCore(
 		zapcore.NewConsoleEncoder(logConfig),
-		os.Stdout,
+		os.Stderr,
 		enabler,
 	))
 }
 
 func appMain(c *cli.Context) (err error) {
 	logger = setupLogger(c.Bool("verbose"))
+
+	// 检查是否为批处理模式
+	if c.Bool("batch") {
+		return runBatchMode(logger)
+	}
 
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -365,11 +372,15 @@ func (p *processor) process(inputFile string, allDec []common.DecoderFactory) er
 
 	params := &ffmpeg.UpdateMetadataParams{}
 
-	header := bytes.NewBuffer(nil)
-	_, err = io.CopyN(header, dec, 64)
+	// 使用内存池获取header缓冲区
+	headerBuf := pool.GetBuffer(64)
+	defer pool.PutBuffer(headerBuf)
+
+	_, err = io.ReadFull(dec, headerBuf)
 	if err != nil {
 		return fmt.Errorf("read header failed: %w", err)
 	}
+	header := bytes.NewBuffer(headerBuf)
 	audio := io.MultiReader(header, dec)
 	params.AudioExt = sniff.AudioExtensionWithFallback(header.Bytes(), ".mp3")
 

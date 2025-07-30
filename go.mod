@@ -13,6 +13,7 @@ require (
 	golang.org/x/crypto v0.29.0
 	golang.org/x/exp v0.0.0-20250305212735-054e65f0b394
 	golang.org/x/text v0.20.0
+	modernc.org/sqlite v1.37.0
 	unlock-music.dev/mmkv v0.1.0
 )
 
@@ -31,5 +32,4 @@ require (
 	modernc.org/libc v1.62.1 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.9.1 // indirect
-	modernc.org/sqlite v1.37.0 // indirect
 )
