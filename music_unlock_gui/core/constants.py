@@ -78,6 +78,20 @@ PLATFORM_FORMAT_GROUPS = {
 OUTPUT_MODE_SOURCE = "source"
 OUTPUT_MODE_CUSTOM = "custom"
 
+# 命名格式常量
+NAMING_FORMAT_AUTO = "auto"
+NAMING_FORMAT_TITLE_ARTIST = "title-artist"
+NAMING_FORMAT_ARTIST_TITLE = "artist-title"
+NAMING_FORMAT_ORIGINAL = "original"
+
+# 命名格式显示文本
+NAMING_FORMAT_LABELS = {
+    NAMING_FORMAT_AUTO: "智能识别（推荐）",
+    NAMING_FORMAT_TITLE_ARTIST: "歌曲名-歌手名",
+    NAMING_FORMAT_ARTIST_TITLE: "歌手名-歌曲名",
+    NAMING_FORMAT_ORIGINAL: "保持原文件名"
+}
+
 # UI相关常量
 UI_WINDOW_TITLE = "音乐解密工具 - Unlock Music GUI"
 UI_WINDOW_SIZE = "900x700"

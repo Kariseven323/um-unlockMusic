@@ -61,6 +61,7 @@ func main() {
 			&cli.BoolFlag{Name: "overwrite", Usage: "overwrite output file without asking", Required: false, Value: false},
 			&cli.BoolFlag{Name: "watch", Usage: "watch the input dir and process new files", Required: false, Value: false},
 			&cli.BoolFlag{Name: "batch", Usage: "batch processing mode (read JSON from stdin)", Required: false, Value: false},
+			&cli.StringFlag{Name: "naming-format", Usage: "output filename format: auto (smart detection), title-artist, artist-title, original", Required: false, Value: "auto"},
 
 			&cli.BoolFlag{Name: "supported-ext", Usage: "show supported file extensions and exit", Required: false, Value: false},
 		},
@@ -207,6 +208,7 @@ func appMain(c *cli.Context) (err error) {
 		removeSource:    c.Bool("remove-source"),
 		updateMetadata:  c.Bool("update-metadata"),
 		overwriteOutput: c.Bool("overwrite"),
+		namingFormat:    c.String("naming-format"),
 	}
 
 	if inputStat.IsDir() {
@@ -233,6 +235,59 @@ type processor struct {
 	removeSource    bool
 	updateMetadata  bool
 	overwriteOutput bool
+	namingFormat    string
+}
+
+// generateOutputFilename 根据命名格式生成输出文件名
+func (p *processor) generateOutputFilename(inputFilename, audioExt string) string {
+	switch p.namingFormat {
+	case "original":
+		// 保持原文件名不变
+		return inputFilename + audioExt
+	case "title-artist":
+		// 强制使用"歌曲名-歌手名"格式
+		return p.formatFilename(inputFilename, audioExt, true)
+	case "artist-title":
+		// 强制使用"歌手名-歌曲名"格式
+		return p.formatFilename(inputFilename, audioExt, false)
+	case "auto":
+		fallthrough
+	default:
+		// 使用智能解析（默认行为）
+		return p.formatFilename(inputFilename, audioExt, false)
+	}
+}
+
+// formatFilename 使用智能解析格式化文件名
+func (p *processor) formatFilename(inputFilename, audioExt string, titleFirst bool) string {
+	// 使用智能解析获取元数据
+	meta := common.SmartParseFilenameMeta(inputFilename)
+
+	title := meta.GetTitle()
+	artists := meta.GetArtists()
+
+	// 如果解析失败，回退到原文件名
+	if title == "" {
+		return inputFilename + audioExt
+	}
+
+	// 构建艺术家字符串
+	var artistStr string
+	if len(artists) > 0 {
+		artistStr = strings.Join(artists, ", ")
+	}
+
+	// 根据格式要求生成文件名
+	if titleFirst && artistStr != "" {
+		// 歌曲名-歌手名格式
+		return title + " - " + artistStr + audioExt
+	} else if !titleFirst && artistStr != "" {
+		// 歌手名-歌曲名格式
+		return artistStr + " - " + title + audioExt
+	} else {
+		// 只有标题，没有艺术家信息
+		return title + audioExt
+	}
 }
 
 func (p *processor) watchDir(inputDir string) error {
@@ -463,7 +518,8 @@ func (p *processor) process(inputFile string, allDec []common.DecoderFactory) er
 	}
 
 	inFilename := strings.TrimSuffix(filepath.Base(inputFile), decoderFactory.Suffix)
-	outPath := filepath.Join(p.outputDir, inputRelDir, inFilename+params.AudioExt)
+	outFilename := p.generateOutputFilename(inFilename, params.AudioExt)
+	outPath := filepath.Join(p.outputDir, inputRelDir, outFilename)
 
 	if !p.overwriteOutput {
 		_, err := os.Stat(outPath)

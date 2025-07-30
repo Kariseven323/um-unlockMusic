@@ -35,6 +35,7 @@ type ProcessOptions struct {
 	OverwriteOutput bool   `json:"overwrite_output,omitempty"`
 	SkipNoop        bool   `json:"skip_noop,omitempty"`
 	KggDbPath       string `json:"kgg_db_path,omitempty"`
+	NamingFormat    string `json:"naming_format,omitempty"`
 }
 
 // ProcessResult 处理结果
@@ -101,6 +102,7 @@ func newBatchProcessor(options ProcessOptions, logger *zap.Logger) *batchProcess
 		updateMetadata:  options.UpdateMetadata,
 		overwriteOutput: options.OverwriteOutput,
 		kggDbPath:       options.KggDbPath,
+		namingFormat:    options.NamingFormat,
 	}
 
 	// 动态设置并发数
@@ -235,6 +237,11 @@ func readBatchRequest() (*BatchRequest, error) {
 	var request BatchRequest
 	if err := json.Unmarshal(data, &request); err != nil {
 		return nil, fmt.Errorf("解析JSON失败: %w", err)
+	}
+
+	// 设置默认命名格式
+	if request.Options.NamingFormat == "" {
+		request.Options.NamingFormat = "auto"
 	}
 
 	return &request, nil

@@ -95,7 +95,7 @@ class ThreadManager:
 
     def start_batch_processing(self, file_list: List[str], output_dir: str = None,
                               processor=None, message_queue: queue.Queue = None,
-                              use_source_dir: bool = False):
+                              use_source_dir: bool = False, naming_format: str = "auto"):
         """
         开始批处理模式处理文件列表（使用Go的批处理API）
 
@@ -105,6 +105,7 @@ class ThreadManager:
             processor: 文件处理器实例
             message_queue: 消息队列，用于向GUI线程发送状态更新
             use_source_dir: 是否使用源文件目录作为输出目录
+            naming_format: 文件命名格式 (auto, title-artist, artist-title, original)
         """
         if self.processing:
             self.logger.warning("已有处理任务在运行")
@@ -118,7 +119,7 @@ class ThreadManager:
         # 使用单个线程执行批处理
         future = threading.Thread(
             target=self._process_batch,
-            args=(file_list, output_dir, processor, message_queue, use_source_dir),
+            args=(file_list, output_dir, processor, message_queue, use_source_dir, naming_format),
             daemon=True
         )
         future.start()
@@ -319,7 +320,7 @@ class ThreadManager:
 
     def _process_batch(self, file_list: List[str], output_dir: str = None,
                       processor=None, message_queue: queue.Queue = None,
-                      use_source_dir: bool = False):
+                      use_source_dir: bool = False, naming_format: str = "auto"):
         """
         批处理模式处理文件列表
 
@@ -347,7 +348,8 @@ class ThreadManager:
             response = processor.process_files_batch(
                 file_list,
                 output_dir,
-                use_source_dir
+                use_source_dir,
+                naming_format
             )
 
             if self.stop_event.is_set():

@@ -17,6 +17,11 @@ from core.constants import (
     PLATFORM_FORMAT_GROUPS,
     OUTPUT_MODE_SOURCE,
     OUTPUT_MODE_CUSTOM,
+    NAMING_FORMAT_AUTO,
+    NAMING_FORMAT_TITLE_ARTIST,
+    NAMING_FORMAT_ARTIST_TITLE,
+    NAMING_FORMAT_ORIGINAL,
+    NAMING_FORMAT_LABELS,
     UI_WINDOW_TITLE,
     UI_WINDOW_SIZE,
     UI_WINDOW_MIN_SIZE,
@@ -125,9 +130,28 @@ class MusicUnlockGUI:
         self.output_button = ttk.Button(custom_frame, text="选择目录", command=self.select_output_dir)
         self.output_button.grid(row=0, column=2)
 
+        # 命名格式选择
+        naming_frame = ttk.Frame(output_frame)
+        naming_frame.grid(row=2, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(5, 0))
+
+        ttk.Label(naming_frame, text="文件命名:").pack(side=tk.LEFT, padx=(0, 10))
+
+        self.naming_format_var = tk.StringVar(value=NAMING_FORMAT_AUTO)
+        naming_combo = ttk.Combobox(naming_frame, textvariable=self.naming_format_var,
+                                   values=list(NAMING_FORMAT_LABELS.values()),
+                                   state="readonly", width=20)
+        naming_combo.pack(side=tk.LEFT)
+
+        # 设置组合框的值映射
+        self.naming_format_mapping = {v: k for k, v in NAMING_FORMAT_LABELS.items()}
+        self.reverse_naming_format_mapping = {k: v for k, v in NAMING_FORMAT_LABELS.items()}
+
+        # 设置默认显示值
+        naming_combo.set(NAMING_FORMAT_LABELS[NAMING_FORMAT_AUTO])
+
         # 初始状态设置
         self.on_output_mode_change()
-        
+
         # 文件操作按钮
         button_frame = ttk.Frame(main_frame)
         button_frame.grid(row=1, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(0, 10))
@@ -274,6 +298,11 @@ class MusicUnlockGUI:
         if directory:
             self.output_dir = directory
             self.output_var.set(directory)
+
+    def get_naming_format(self):
+        """获取当前选择的命名格式"""
+        display_value = self.naming_format_var.get()
+        return self.naming_format_mapping.get(display_value, NAMING_FORMAT_AUTO)
     
     def add_files(self):
         """添加文件"""
@@ -354,12 +383,16 @@ class MusicUnlockGUI:
         output_mode = self.output_mode_var.get()
         output_dir = self.output_dir if output_mode == OUTPUT_MODE_CUSTOM else None
 
+        # 获取命名格式
+        naming_format = self.get_naming_format()
+
         self.thread_manager.start_batch_processing(
             self.file_list,
             output_dir,
             self.processor,
             self.message_queue,
-            use_source_dir=(output_mode == OUTPUT_MODE_SOURCE)
+            use_source_dir=(output_mode == OUTPUT_MODE_SOURCE),
+            naming_format=naming_format
         )
         
         self.update_status(SUCCESS_MESSAGES['processing_started'])

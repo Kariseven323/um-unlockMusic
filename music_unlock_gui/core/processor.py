@@ -91,7 +91,8 @@ class FileProcessor:
         return file_ext in self.supported_extensions_set
     
     def process_file(self, input_file: str, output_dir: str = None,
-                    progress_callback=None, use_source_dir: bool = False) -> Tuple[bool, str]:
+                    progress_callback=None, use_source_dir: bool = False,
+                    naming_format: str = "auto") -> Tuple[bool, str]:
         """
         处理单个音乐文件
 
@@ -100,6 +101,7 @@ class FileProcessor:
             output_dir: 输出目录路径（可选）
             progress_callback: 进度回调函数
             use_source_dir: 是否使用源文件目录作为输出目录
+            naming_format: 文件命名格式 (auto, title-artist, artist-title, original)
 
         Returns:
             Tuple[bool, str]: (是否成功, 错误信息或成功信息)
@@ -124,6 +126,7 @@ class FileProcessor:
                 self.um_exe_path,
                 '-i', input_file,
                 '-o', actual_output_dir,
+                '--naming-format', naming_format,
                 '--overwrite',  # 覆盖已存在的文件
                 '--verbose'     # 详细输出
             ]
@@ -306,7 +309,7 @@ class FileProcessor:
             return output_dir
 
     def process_files_batch(self, file_list: list, output_dir: str = None,
-                           use_source_dir: bool = False) -> dict:
+                           use_source_dir: bool = False, naming_format: str = "auto") -> dict:
         """
         批量处理多个音乐文件（使用Go的批处理模式）
 
@@ -314,6 +317,7 @@ class FileProcessor:
             file_list: 要处理的文件列表
             output_dir: 输出目录路径（可选）
             use_source_dir: 是否使用源文件目录作为输出目录
+            naming_format: 文件命名格式 (auto, title-artist, artist-title, original)
 
         Returns:
             dict: 批处理结果
@@ -328,7 +332,8 @@ class FileProcessor:
                     "remove_source": False,
                     "update_metadata": True,
                     "overwrite_output": True,
-                    "skip_noop": True
+                    "skip_noop": True,
+                    "naming_format": naming_format
                 }
             }
 
