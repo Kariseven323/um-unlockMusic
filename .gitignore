@@ -10,3 +10,8 @@
 
 /prepare
 /dist
+
+/testdata
+/output
+
+/build

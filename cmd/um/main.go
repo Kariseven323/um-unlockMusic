@@ -27,7 +27,9 @@ import (
 	_ "unlock-music.dev/cli/algo/tm"
 	_ "unlock-music.dev/cli/algo/xiami"
 	_ "unlock-music.dev/cli/algo/ximalaya"
+	"unlock-music.dev/cli/internal/cache"
 	"unlock-music.dev/cli/internal/ffmpeg"
+	"unlock-music.dev/cli/internal/pool"
 	"unlock-music.dev/cli/internal/sniff"
 	"unlock-music.dev/cli/internal/utils"
 )
@@ -58,6 +60,8 @@ func main() {
 			&cli.BoolFlag{Name: "update-metadata", Usage: "update metadata & album art from network", Required: false, Value: false},
 			&cli.BoolFlag{Name: "overwrite", Usage: "overwrite output file without asking", Required: false, Value: false},
 			&cli.BoolFlag{Name: "watch", Usage: "watch the input dir and process new files", Required: false, Value: false},
+			&cli.BoolFlag{Name: "batch", Usage: "batch processing mode (read JSON from stdin)", Required: false, Value: false},
+			&cli.StringFlag{Name: "naming-format", Usage: "output filename format: auto (smart detection), title-artist, artist-title, original", Required: false, Value: "auto"},
 
 			&cli.BoolFlag{Name: "supported-ext", Usage: "show supported file extensions and exit", Required: false, Value: false},
 		},
@@ -107,13 +111,18 @@ func setupLogger(verbose bool) *zap.Logger {
 
 	return zap.New(zapcore.NewCore(
 		zapcore.NewConsoleEncoder(logConfig),
-		os.Stdout,
+		os.Stderr,
 		enabler,
 	))
 }
 
 func appMain(c *cli.Context) (err error) {
 	logger = setupLogger(c.Bool("verbose"))
+
+	// 检查是否为批处理模式
+	if c.Bool("batch") {
+		return runBatchMode(logger)
+	}
 
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -199,6 +208,7 @@ func appMain(c *cli.Context) (err error) {
 		removeSource:    c.Bool("remove-source"),
 		updateMetadata:  c.Bool("update-metadata"),
 		overwriteOutput: c.Bool("overwrite"),
+		namingFormat:    c.String("naming-format"),
 	}
 
 	if inputStat.IsDir() {
@@ -225,6 +235,59 @@ type processor struct {
 	removeSource    bool
 	updateMetadata  bool
 	overwriteOutput bool
+	namingFormat    string
+}
+
+// generateOutputFilename 根据命名格式生成输出文件名
+func (p *processor) generateOutputFilename(inputFilename, audioExt string) string {
+	switch p.namingFormat {
+	case "original":
+		// 保持原文件名不变
+		return inputFilename + audioExt
+	case "title-artist":
+		// 强制使用"歌曲名-歌手名"格式
+		return p.formatFilename(inputFilename, audioExt, true)
+	case "artist-title":
+		// 强制使用"歌手名-歌曲名"格式
+		return p.formatFilename(inputFilename, audioExt, false)
+	case "auto":
+		fallthrough
+	default:
+		// 使用智能解析（默认行为）
+		return p.formatFilename(inputFilename, audioExt, false)
+	}
+}
+
+// formatFilename 使用智能解析格式化文件名
+func (p *processor) formatFilename(inputFilename, audioExt string, titleFirst bool) string {
+	// 使用智能解析获取元数据
+	meta := common.SmartParseFilenameMeta(inputFilename)
+
+	title := meta.GetTitle()
+	artists := meta.GetArtists()
+
+	// 如果解析失败，回退到原文件名
+	if title == "" {
+		return inputFilename + audioExt
+	}
+
+	// 构建艺术家字符串
+	var artistStr string
+	if len(artists) > 0 {
+		artistStr = strings.Join(artists, ", ")
+	}
+
+	// 根据格式要求生成文件名
+	if titleFirst && artistStr != "" {
+		// 歌曲名-歌手名格式
+		return title + " - " + artistStr + audioExt
+	} else if !titleFirst && artistStr != "" {
+		// 歌手名-歌曲名格式
+		return artistStr + " - " + title + audioExt
+	} else {
+		// 只有标题，没有艺术家信息
+		return title + audioExt
+	}
 }
 
 func (p *processor) watchDir(inputDir string) error {
@@ -365,11 +428,15 @@ func (p *processor) process(inputFile string, allDec []common.DecoderFactory) er
 
 	params := &ffmpeg.UpdateMetadataParams{}
 
-	header := bytes.NewBuffer(nil)
-	_, err = io.CopyN(header, dec, 64)
+	// 使用内存池获取header缓冲区，增加大小以提高格式识别准确性
+	headerBuf := pool.GetBuffer(256) // 从64字节增加到256字节
+	defer pool.PutBuffer(headerBuf)
+
+	_, err = io.ReadFull(dec, headerBuf)
 	if err != nil {
 		return fmt.Errorf("read header failed: %w", err)
 	}
+	header := bytes.NewBuffer(headerBuf)
 	audio := io.MultiReader(header, dec)
 	params.AudioExt = sniff.AudioExtensionWithFallback(header.Bytes(), ".mp3")
 
@@ -382,7 +449,7 @@ func (p *processor) process(inputFile string, allDec []common.DecoderFactory) er
 			// we need to write the audio to a temp file.
 			// since qmc decoder doesn't support seeking & relying on ffmpeg probe, we need to read the whole file.
 			// TODO: support seeking or using pipe for qmc decoder.
-			params.Audio, err = utils.WriteTempFile(audio, params.AudioExt)
+			params.Audio, err = utils.OptimizedWriteTempFile(audio, params.AudioExt)
 			if err != nil {
 				return fmt.Errorf("updateAudioMeta write temp file: %w", err)
 			}
@@ -399,6 +466,33 @@ func (p *processor) process(inputFile string, allDec []common.DecoderFactory) er
 					return fmt.Errorf("updateAudioMeta open temp file: %w", err)
 				}
 			}
+		}
+	}
+
+	// 检查元数据缓存
+	var cachedEntry *cache.MetadataEntry
+	if p.updateMetadata {
+		if stat, err := os.Stat(inputFile); err == nil {
+			cachedEntry, _ = cache.GetMetadata(inputFile, stat.Size(), stat.ModTime())
+		}
+	}
+
+	// 用文件名信息包装元数据，确保标题准确性
+	if p.updateMetadata {
+		if cachedEntry != nil {
+			// 使用缓存的元数据
+			params.Meta = cachedEntry.Meta
+			logger.Debug("使用缓存的元数据", zap.String("文件", inputFile))
+		} else if params.Meta != nil {
+			params.Meta = common.WrapMetaWithFilename(params.Meta, filepath.Base(inputFile))
+
+			// 缓存元数据
+			if stat, err := os.Stat(inputFile); err == nil {
+				cache.PutMetadata(inputFile, stat.Size(), stat.ModTime(), params.Meta, nil)
+			}
+		} else {
+			// 如果元数据获取失败，直接使用文件名元数据
+			params.Meta = common.ParseFilenameMeta(filepath.Base(inputFile))
 		}
 	}
 
@@ -424,7 +518,8 @@ func (p *processor) process(inputFile string, allDec []common.DecoderFactory) er
 	}
 
 	inFilename := strings.TrimSuffix(filepath.Base(inputFile), decoderFactory.Suffix)
-	outPath := filepath.Join(p.outputDir, inputRelDir, inFilename+params.AudioExt)
+	outFilename := p.generateOutputFilename(inFilename, params.AudioExt)
+	outPath := filepath.Join(p.outputDir, inputRelDir, outFilename)
 
 	if !p.overwriteOutput {
 		_, err := os.Stat(outPath)
@@ -443,7 +538,7 @@ func (p *processor) process(inputFile string, allDec []common.DecoderFactory) er
 		}
 		defer outFile.Close()
 
-		if _, err := io.Copy(outFile, audio); err != nil {
+		if _, err := utils.OptimizedCopy(outFile, audio); err != nil {
 			return err
 		}
 	} else {

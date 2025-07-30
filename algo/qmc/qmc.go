@@ -13,6 +13,7 @@ import (
 	"go.uber.org/zap"
 
 	"unlock-music.dev/cli/algo/common"
+	"unlock-music.dev/cli/internal/pool"
 	"unlock-music.dev/cli/internal/sniff"
 )
 
@@ -101,8 +102,13 @@ func (d *Decoder) Validate() error {
 	}
 	d.audio = io.LimitReader(d.raw, int64(d.audioLen))
 
-	// prepare for sniffing metadata
-	d.probeBuf = bytes.NewBuffer(make([]byte, 0, d.audioLen))
+	// prepare for sniffing metadata - use buffer pool for memory efficiency
+	// 限制probeBuf的最大大小，避免为大文件分配过多内存
+	maxProbeSize := int(d.audioLen)
+	if maxProbeSize > pool.LargeBufferSize {
+		maxProbeSize = pool.LargeBufferSize
+	}
+	d.probeBuf = bytes.NewBuffer(make([]byte, 0, maxProbeSize))
 
 	return nil
 }
@@ -113,7 +119,10 @@ func (d *Decoder) validateDecode() error {
 		return fmt.Errorf("qmc seek to start: %w", err)
 	}
 
-	buf := make([]byte, 64)
+	// 使用内存池获取缓冲区，增加大小以提高格式识别准确性
+	buf := pool.GetBuffer(256) // 从64字节增加到256字节
+	defer pool.PutBuffer(buf)
+
 	if _, err := io.ReadFull(d.raw, buf); err != nil {
 		return fmt.Errorf("qmc read header: %w", err)
 	}

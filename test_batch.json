@@ -1,0 +1,14 @@
+{
+  "files": [
+    {
+      "input_path": "testdata/听妈妈的话 (Live) - 周杰伦 _ 潘玮柏 _ 张学友.mflac",
+      "output_path": "output"
+    }
+  ],
+  "options": {
+    "remove_source": false,
+    "update_metadata": true,
+    "overwrite_output": true,
+    "skip_noop": true
+  }
+}
