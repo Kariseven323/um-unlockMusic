@@ -27,6 +27,7 @@ import (
 	_ "unlock-music.dev/cli/algo/tm"
 	_ "unlock-music.dev/cli/algo/xiami"
 	_ "unlock-music.dev/cli/algo/ximalaya"
+	"unlock-music.dev/cli/internal/cache"
 	"unlock-music.dev/cli/internal/ffmpeg"
 	"unlock-music.dev/cli/internal/pool"
 	"unlock-music.dev/cli/internal/sniff"
@@ -372,8 +373,8 @@ func (p *processor) process(inputFile string, allDec []common.DecoderFactory) er
 
 	params := &ffmpeg.UpdateMetadataParams{}
 
-	// 使用内存池获取header缓冲区
-	headerBuf := pool.GetBuffer(64)
+	// 使用内存池获取header缓冲区，增加大小以提高格式识别准确性
+	headerBuf := pool.GetBuffer(256) // 从64字节增加到256字节
 	defer pool.PutBuffer(headerBuf)
 
 	_, err = io.ReadFull(dec, headerBuf)
@@ -393,7 +394,7 @@ func (p *processor) process(inputFile string, allDec []common.DecoderFactory) er
 			// we need to write the audio to a temp file.
 			// since qmc decoder doesn't support seeking & relying on ffmpeg probe, we need to read the whole file.
 			// TODO: support seeking or using pipe for qmc decoder.
-			params.Audio, err = utils.WriteTempFile(audio, params.AudioExt)
+			params.Audio, err = utils.OptimizedWriteTempFile(audio, params.AudioExt)
 			if err != nil {
 				return fmt.Errorf("updateAudioMeta write temp file: %w", err)
 			}
@@ -413,10 +414,27 @@ func (p *processor) process(inputFile string, allDec []common.DecoderFactory) er
 		}
 	}
 
+	// 检查元数据缓存
+	var cachedEntry *cache.MetadataEntry
+	if p.updateMetadata {
+		if stat, err := os.Stat(inputFile); err == nil {
+			cachedEntry, _ = cache.GetMetadata(inputFile, stat.Size(), stat.ModTime())
+		}
+	}
+
 	// 用文件名信息包装元数据，确保标题准确性
 	if p.updateMetadata {
-		if params.Meta != nil {
+		if cachedEntry != nil {
+			// 使用缓存的元数据
+			params.Meta = cachedEntry.Meta
+			logger.Debug("使用缓存的元数据", zap.String("文件", inputFile))
+		} else if params.Meta != nil {
 			params.Meta = common.WrapMetaWithFilename(params.Meta, filepath.Base(inputFile))
+
+			// 缓存元数据
+			if stat, err := os.Stat(inputFile); err == nil {
+				cache.PutMetadata(inputFile, stat.Size(), stat.ModTime(), params.Meta, nil)
+			}
 		} else {
 			// 如果元数据获取失败，直接使用文件名元数据
 			params.Meta = common.ParseFilenameMeta(filepath.Base(inputFile))
@@ -464,7 +482,7 @@ func (p *processor) process(inputFile string, allDec []common.DecoderFactory) er
 		}
 		defer outFile.Close()
 
-		if _, err := io.Copy(outFile, audio); err != nil {
+		if _, err := utils.OptimizedCopy(outFile, audio); err != nil {
 			return err
 		}
 	} else {

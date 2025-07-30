@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 
 	"go.uber.org/zap"
 
@@ -15,8 +16,45 @@ import (
 	"unlock-music.dev/cli/internal/utils"
 )
 
+// FFmpegProcessPool FFmpeg进程池，用于复用进程减少启动开销
+type FFmpegProcessPool struct {
+	maxSize     int
+	processes   chan *exec.Cmd
+	mutex       sync.Mutex
+	initialized bool
+}
+
+var (
+	globalFFmpegPool *FFmpegProcessPool
+	poolOnce         sync.Once
+)
+
+// GetFFmpegPool 获取全局FFmpeg进程池
+func GetFFmpegPool() *FFmpegProcessPool {
+	poolOnce.Do(func() {
+		globalFFmpegPool = &FFmpegProcessPool{
+			maxSize:   4, // 最多保持4个进程
+			processes: make(chan *exec.Cmd, 4),
+		}
+	})
+	return globalFFmpegPool
+}
+
+// getProcess 获取一个可用的FFmpeg进程（暂时简化，直接创建新进程）
+func (p *FFmpegProcessPool) getProcess(ctx context.Context, args ...string) *exec.Cmd {
+	// 简化实现：直接创建新进程
+	// 完整的进程池实现需要更复杂的生命周期管理
+	return exec.CommandContext(ctx, "ffmpeg", args...)
+}
+
+// getProbeProcess 获取一个可用的FFprobe进程
+func (p *FFmpegProcessPool) getProbeProcess(ctx context.Context, args ...string) *exec.Cmd {
+	return exec.CommandContext(ctx, "ffprobe", args...)
+}
+
 func ExtractAlbumArt(ctx context.Context, rd io.Reader) (*bytes.Buffer, error) {
-	cmd := exec.CommandContext(ctx, "ffmpeg",
+	pool := GetFFmpegPool()
+	cmd := pool.getProcess(ctx,
 		"-i", "pipe:0", // input from stdin
 		"-an",              // disable audio
 		"-codec:v", "copy", // copy video(image) codec

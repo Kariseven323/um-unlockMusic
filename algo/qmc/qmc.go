@@ -119,8 +119,8 @@ func (d *Decoder) validateDecode() error {
 		return fmt.Errorf("qmc seek to start: %w", err)
 	}
 
-	// 使用内存池获取缓冲区
-	buf := pool.GetBuffer(64)
+	// 使用内存池获取缓冲区，增加大小以提高格式识别准确性
+	buf := pool.GetBuffer(256) // 从64字节增加到256字节
 	defer pool.PutBuffer(buf)
 
 	if _, err := io.ReadFull(d.raw, buf); err != nil {

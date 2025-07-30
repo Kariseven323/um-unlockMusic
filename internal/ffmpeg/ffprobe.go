@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"io"
-	"os/exec"
 	"strings"
 
 	"github.com/samber/lo"
@@ -117,7 +116,8 @@ type ProbeDisposition struct {
 }
 
 func ProbeReader(ctx context.Context, rd io.Reader) (*Result, error) {
-	cmd := exec.CommandContext(ctx, "ffprobe",
+	pool := GetFFmpegPool()
+	cmd := pool.getProbeProcess(ctx,
 		"-v", "quiet", // disable logging
 		"-print_format", "json", // use json format
 		"-show_format", "-show_streams", "-show_error", // retrieve format and streams

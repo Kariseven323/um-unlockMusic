@@ -1,16 +1,30 @@
 package qmc
 
+import (
+	"unlock-music.dev/cli/internal/simd"
+)
+
 func newStaticCipher() *staticCipher {
 	return &defaultStaticCipher
 }
 
-var defaultStaticCipher = staticCipher{}
+var defaultStaticCipher = staticCipher{
+	optimized: simd.NewStaticCipherOptimized(staticCipherBox),
+}
 
-type staticCipher struct{}
+type staticCipher struct {
+	optimized *simd.StaticCipherOptimized
+}
 
 func (c *staticCipher) Decrypt(buf []byte, offset int) {
-	for i := 0; i < len(buf); i++ {
-		buf[i] ^= c.getMask(offset + i)
+	// 对于大缓冲区使用SIMD优化
+	if len(buf) >= 64 && c.optimized != nil {
+		c.optimized.Decrypt(buf, offset)
+	} else {
+		// 小缓冲区使用标准方法
+		for i := 0; i < len(buf); i++ {
+			buf[i] ^= c.getMask(offset + i)
+		}
 	}
 }
 func (c *staticCipher) getMask(offset int) byte {

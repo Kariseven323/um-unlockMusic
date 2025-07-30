@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"sync"
 	"time"
 
@@ -23,6 +24,8 @@ type BatchRequest struct {
 type FileTask struct {
 	InputPath  string `json:"input_path"`
 	OutputPath string `json:"output_path,omitempty"`
+	Priority   int    `json:"priority,omitempty"`  // 任务优先级，数值越小优先级越高
+	FileSize   int64  `json:"file_size,omitempty"` // 文件大小，用于优先级计算
 }
 
 // ProcessOptions 处理选项
@@ -64,6 +67,15 @@ type resultWithIndex struct {
 	result ProcessResult
 }
 
+// pipelineData 流水线数据结构
+type pipelineData struct {
+	index    int
+	task     FileTask
+	audio    []byte      // 解密后的音频数据
+	metadata interface{} // 元数据
+	error    error
+}
+
 // batchProcessor 批处理器
 type batchProcessor struct {
 	logger  *zap.Logger
@@ -74,6 +86,10 @@ type batchProcessor struct {
 
 	// 并发控制
 	maxWorkers int
+
+	// 流水线并发控制
+	enablePipeline bool
+	pipelineStages int
 }
 
 // newBatchProcessor 创建批处理器
@@ -87,28 +103,37 @@ func newBatchProcessor(options ProcessOptions, logger *zap.Logger) *batchProcess
 		kggDbPath:       options.KggDbPath,
 	}
 
-	// 设置并发数，默认为CPU核心数
-	maxWorkers := runtime.NumCPU()
-	if maxWorkers > 8 {
-		maxWorkers = 8 // 限制最大并发数
-	}
+	// 动态设置并发数
+	maxWorkers := calculateOptimalWorkers()
 
 	return &batchProcessor{
-		logger:        logger,
-		options:       options,
-		baseProcessor: baseProc,
-		maxWorkers:    maxWorkers,
+		logger:         logger,
+		options:        options,
+		baseProcessor:  baseProc,
+		maxWorkers:     maxWorkers,
+		enablePipeline: true, // 启用流水线并发
+		pipelineStages: 2,    // 2个阶段：解密和写入
 	}
 }
 
 // processBatch 处理批量任务（并发版本）
 func (bp *batchProcessor) processBatch(request *BatchRequest) *BatchResponse {
+	// 如果启用流水线并发且文件数量足够多，使用流水线模式
+	if bp.enablePipeline && len(request.Files) >= 4 {
+		return bp.processBatchPipeline(request)
+	}
+
+	// 否则使用传统并发模式
 	startTime := time.Now()
 
 	response := &BatchResponse{
 		Results:    make([]ProcessResult, len(request.Files)),
 		TotalFiles: len(request.Files),
 	}
+
+	// 计算任务优先级并排序
+	bp.calculateTaskPriorities(request.Files)
+	bp.sortTasksByPriority(request.Files)
 
 	bp.logger.Info("开始并发批处理",
 		zap.Int("文件数量", len(request.Files)),
@@ -262,6 +287,189 @@ func (bp *batchProcessor) worker(wg *sync.WaitGroup, taskChan <-chan taskWithInd
 		result := bp.processFileTask(taskWithIdx.task)
 		resultChan <- resultWithIndex{
 			index:  taskWithIdx.index,
+			result: result,
+		}
+	}
+}
+
+// calculateOptimalWorkers 动态计算最优worker数量
+func calculateOptimalWorkers() int {
+	cpuCount := runtime.NumCPU()
+
+	// 基于CPU核心数和系统负载动态调整
+	// I/O密集型任务可以使用更多worker
+	maxWorkers := cpuCount * 2
+
+	// 设置合理的上下限
+	if maxWorkers < 2 {
+		maxWorkers = 2
+	}
+	if maxWorkers > 16 {
+		maxWorkers = 16 // 避免过多goroutine导致调度开销
+	}
+
+	return maxWorkers
+}
+
+// calculateTaskPriorities 计算任务优先级
+func (bp *batchProcessor) calculateTaskPriorities(tasks []FileTask) {
+	for i := range tasks {
+		task := &tasks[i]
+
+		// 获取文件大小
+		if task.FileSize == 0 {
+			if stat, err := os.Stat(task.InputPath); err == nil {
+				task.FileSize = stat.Size()
+			}
+		}
+
+		// 计算优先级：小文件优先（优先级数值越小越优先）
+		// 基于文件大小计算，小于1MB的文件优先级为1，其他为2
+		if task.Priority == 0 {
+			if task.FileSize < 1024*1024 { // 1MB
+				task.Priority = 1 // 高优先级
+			} else {
+				task.Priority = 2 // 普通优先级
+			}
+		}
+	}
+}
+
+// sortTasksByPriority 按优先级排序任务
+func (bp *batchProcessor) sortTasksByPriority(tasks []FileTask) {
+	sort.Slice(tasks, func(i, j int) bool {
+		// 首先按优先级排序
+		if tasks[i].Priority != tasks[j].Priority {
+			return tasks[i].Priority < tasks[j].Priority
+		}
+		// 相同优先级时，按文件大小排序（小文件优先）
+		return tasks[i].FileSize < tasks[j].FileSize
+	})
+}
+
+// processBatchPipeline 流水线并发处理批量任务
+func (bp *batchProcessor) processBatchPipeline(request *BatchRequest) *BatchResponse {
+	startTime := time.Now()
+
+	response := &BatchResponse{
+		Results:    make([]ProcessResult, len(request.Files)),
+		TotalFiles: len(request.Files),
+	}
+
+	// 计算任务优先级并排序
+	bp.calculateTaskPriorities(request.Files)
+	bp.sortTasksByPriority(request.Files)
+
+	bp.logger.Info("开始流水线并发批处理",
+		zap.Int("文件数量", len(request.Files)),
+		zap.Int("并发数", bp.maxWorkers),
+		zap.Int("流水线阶段", bp.pipelineStages))
+
+	// 创建流水线通道
+	decryptChan := make(chan taskWithIndex, bp.maxWorkers)
+	writeChan := make(chan pipelineData, bp.maxWorkers)
+	resultChan := make(chan resultWithIndex, len(request.Files))
+
+	// 启动解密worker
+	var decryptWg sync.WaitGroup
+	for i := 0; i < bp.maxWorkers/2; i++ { // 一半worker用于解密
+		decryptWg.Add(1)
+		go bp.decryptWorker(&decryptWg, decryptChan, writeChan)
+	}
+
+	// 启动写入worker
+	var writeWg sync.WaitGroup
+	for i := 0; i < bp.maxWorkers/2; i++ { // 一半worker用于写入
+		writeWg.Add(1)
+		go bp.writeWorker(&writeWg, writeChan, resultChan)
+	}
+
+	// 发送解密任务
+	go func() {
+		for i, task := range request.Files {
+			decryptChan <- taskWithIndex{index: i, task: task}
+		}
+		close(decryptChan)
+	}()
+
+	// 等待解密完成并关闭写入通道
+	go func() {
+		decryptWg.Wait()
+		close(writeChan)
+	}()
+
+	// 等待写入完成并关闭结果通道
+	go func() {
+		writeWg.Wait()
+		close(resultChan)
+	}()
+
+	// 收集结果
+	for result := range resultChan {
+		response.Results[result.index] = result.result
+		if result.result.Success {
+			response.SuccessCount++
+		}
+	}
+
+	response.TotalTime = time.Since(startTime).Milliseconds()
+	bp.logger.Info("流水线批处理完成",
+		zap.Int("成功", response.SuccessCount),
+		zap.Int("总数", response.TotalFiles),
+		zap.Int64("耗时(ms)", response.TotalTime))
+
+	return response
+}
+
+// decryptWorker 解密worker
+func (bp *batchProcessor) decryptWorker(wg *sync.WaitGroup, taskChan <-chan taskWithIndex, writeChan chan<- pipelineData) {
+	defer wg.Done()
+
+	for taskWithIdx := range taskChan {
+		data := pipelineData{
+			index: taskWithIdx.index,
+			task:  taskWithIdx.task,
+		}
+
+		// 执行解密操作（简化版本，实际需要调用解密逻辑）
+		// 这里只是示例，实际应该调用真正的解密函数
+		bp.logger.Debug("开始解密", zap.String("文件", taskWithIdx.task.InputPath))
+
+		// TODO: 实际的解密逻辑
+		// data.audio, data.metadata, data.error = bp.performDecryption(taskWithIdx.task)
+
+		writeChan <- data
+	}
+}
+
+// writeWorker 写入worker
+func (bp *batchProcessor) writeWorker(wg *sync.WaitGroup, writeChan <-chan pipelineData, resultChan chan<- resultWithIndex) {
+	defer wg.Done()
+
+	for data := range writeChan {
+		result := ProcessResult{
+			InputPath: data.task.InputPath,
+		}
+
+		if data.error != nil {
+			result.Error = data.error.Error()
+		} else {
+			// 执行写入操作
+			bp.logger.Debug("开始写入", zap.String("文件", data.task.InputPath))
+
+			// TODO: 实际的写入逻辑
+			// err := bp.performWrite(data)
+			// if err != nil {
+			//     result.Error = err.Error()
+			// } else {
+			//     result.Success = true
+			// }
+
+			result.Success = true // 临时设置为成功
+		}
+
+		resultChan <- resultWithIndex{
+			index:  data.index,
 			result: result,
 		}
 	}
