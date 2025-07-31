@@ -148,6 +148,9 @@ func newBatchProcessor(options ProcessOptions, logger *zap.Logger) *batchProcess
 
 // processBatch 处理批量任务（并发版本）
 func (bp *batchProcessor) processBatch(request *BatchRequest) *BatchResponse {
+	// 根据实际文件信息动态调整worker数量
+	bp.optimizeWorkerCount(request.Files)
+
 	// 如果启用流水线并发且文件数量足够多，使用流水线模式
 	if bp.enablePipeline && len(request.Files) >= 4 {
 		return bp.processBatchPipeline(request)
@@ -329,21 +332,86 @@ func (bp *batchProcessor) worker(wg *sync.WaitGroup, taskChan <-chan taskWithInd
 
 // calculateOptimalWorkers 动态计算最优worker数量
 func calculateOptimalWorkers() int {
+	return calculateOptimalWorkersForFiles(0, 0)
+}
+
+// calculateOptimalWorkersForFiles 基于文件数量和大小计算最优worker数量
+func calculateOptimalWorkersForFiles(fileCount int, avgFileSize int64) int {
 	cpuCount := runtime.NumCPU()
 
-	// 基于CPU核心数和系统负载动态调整
-	// I/O密集型任务可以使用更多worker
-	maxWorkers := cpuCount * 2
+	// 基础worker数量：CPU核心数
+	baseWorkers := cpuCount
+
+	// 根据文件特征调整
+	if fileCount > 0 {
+		// 文件数量因子：更多文件可以使用更多worker
+		if fileCount >= 100 {
+			baseWorkers = cpuCount * 3 // 大批量文件
+		} else if fileCount >= 20 {
+			baseWorkers = cpuCount * 2 // 中等批量文件
+		} else if fileCount <= 5 {
+			baseWorkers = cpuCount / 2 // 少量文件，减少开销
+			if baseWorkers < 1 {
+				baseWorkers = 1
+			}
+		}
+
+		// 文件大小因子：大文件更适合I/O并发
+		if avgFileSize > 50*1024*1024 { // >50MB
+			baseWorkers = int(float64(baseWorkers) * 1.5) // 大文件增加I/O并发
+		} else if avgFileSize < 1024*1024 { // <1MB
+			baseWorkers = int(float64(baseWorkers) * 0.8) // 小文件减少开销
+		}
+	} else {
+		// 默认情况：I/O密集型任务可以使用更多worker
+		baseWorkers = cpuCount * 2
+	}
 
 	// 设置合理的上下限
-	if maxWorkers < 2 {
-		maxWorkers = 2
+	if baseWorkers < 1 {
+		baseWorkers = 1
 	}
-	if maxWorkers > 16 {
-		maxWorkers = 16 // 避免过多goroutine导致调度开销
+	if baseWorkers > 20 {
+		baseWorkers = 20 // 避免过多goroutine导致调度开销
 	}
 
-	return maxWorkers
+	return baseWorkers
+}
+
+// optimizeWorkerCount 根据文件信息优化worker数量
+func (bp *batchProcessor) optimizeWorkerCount(files []FileTask) {
+	if len(files) == 0 {
+		return
+	}
+
+	// 计算平均文件大小
+	var totalSize int64
+	validFiles := 0
+
+	for _, file := range files {
+		if stat, err := os.Stat(file.InputPath); err == nil {
+			totalSize += stat.Size()
+			validFiles++
+		}
+	}
+
+	var avgFileSize int64
+	if validFiles > 0 {
+		avgFileSize = totalSize / int64(validFiles)
+	}
+
+	// 重新计算最优worker数量
+	newWorkerCount := calculateOptimalWorkersForFiles(len(files), avgFileSize)
+
+	// 更新worker数量
+	if newWorkerCount != bp.maxWorkers {
+		bp.logger.Info("动态调整worker数量",
+			zap.Int("原worker数", bp.maxWorkers),
+			zap.Int("新worker数", newWorkerCount),
+			zap.Int("文件数量", len(files)),
+			zap.Int64("平均文件大小", avgFileSize))
+		bp.maxWorkers = newWorkerCount
+	}
 }
 
 // calculateTaskPriorities 计算任务优先级

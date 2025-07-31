@@ -2,7 +2,68 @@ package qmc
 
 import (
 	"errors"
+	"sync"
 )
+
+// rc4BoxPool RC4 box数组对象池，用于复用box数组减少内存分配
+type rc4BoxPool struct {
+	pools map[int]*sync.Pool
+	mutex sync.RWMutex
+}
+
+// 全局RC4 box对象池
+var globalRC4BoxPool = &rc4BoxPool{
+	pools: make(map[int]*sync.Pool),
+}
+
+// Get 获取指定大小的box数组
+func (p *rc4BoxPool) Get(size int) []byte {
+	p.mutex.RLock()
+	pool, exists := p.pools[size]
+	p.mutex.RUnlock()
+
+	if !exists {
+		p.mutex.Lock()
+		// 双重检查
+		if pool, exists = p.pools[size]; !exists {
+			pool = &sync.Pool{
+				New: func() any {
+					return make([]byte, size)
+				},
+			}
+			p.pools[size] = pool
+		}
+		p.mutex.Unlock()
+		// 记录对象池未命中
+		// metrics.GlobalMetrics.RecordRC4PoolMiss()
+	} else {
+		// 记录对象池命中
+		// metrics.GlobalMetrics.RecordRC4PoolHit()
+	}
+
+	return pool.Get().([]byte)
+}
+
+// Put 归还box数组到池中
+func (p *rc4BoxPool) Put(box []byte) {
+	if len(box) == 0 {
+		return
+	}
+
+	size := len(box)
+	p.mutex.RLock()
+	pool, exists := p.pools[size]
+	p.mutex.RUnlock()
+
+	if exists {
+		// 使用内置clear函数进行高效清零
+		clear(box)
+		pool.Put(box)
+		// 记录对象池归还
+		// metrics.GlobalMetrics.RecordRC4PoolPut()
+	}
+	// 如果大小不匹配的池不存在，直接丢弃让GC回收
+}
 
 // A rc4Cipher is an instance of RC4 using a particular key.
 type rc4Cipher struct {
@@ -103,7 +164,11 @@ func (c *rc4Cipher) encFirstSegment(buf []byte, offset int) {
 }
 
 func (c *rc4Cipher) encASegment(buf []byte, offset int) {
-	box := make([]byte, c.n)
+	// 从对象池获取box数组，减少内存分配
+	box := globalRC4BoxPool.Get(c.n)
+	defer globalRC4BoxPool.Put(box) // 确保归还到池中
+
+	// 复制初始box状态
 	copy(box, c.box)
 	j, k := 0, 0
 

@@ -1,6 +1,7 @@
 package pool
 
 import (
+	"fmt"
 	"sync"
 )
 
@@ -102,11 +103,24 @@ func (bp *BufferPool) Put(buf []byte) {
 	bp.mutex.RUnlock()
 
 	if exists && capacity == poolSize {
-		// 重置切片长度为容量，清零内容以避免数据泄露
+		// 重置切片长度为容量
 		buf = buf[:capacity]
-		// 清零缓冲区内容以避免数据泄露
-		for i := range buf {
-			buf[i] = 0
+		// 优化：只对敏感数据进行清零，提升性能
+		// 对于音频数据缓冲区，通常不需要完全清零
+		if capacity <= SmallBufferSize {
+			// 小缓冲区可能包含敏感header信息，需要清零
+			for i := range buf {
+				buf[i] = 0
+			}
+		} else {
+			// 大缓冲区主要用于音频数据，只清零前64字节（可能的header）
+			clearSize := 64
+			if len(buf) < clearSize {
+				clearSize = len(buf)
+			}
+			for i := 0; i < clearSize; i++ {
+				buf[i] = 0
+			}
 		}
 		pool.Put(buf)
 	}
@@ -220,4 +234,68 @@ func GetBuffer(size int) []byte {
 // PutBuffer 归还缓冲区
 func PutBuffer(buf []byte) {
 	GetGlobalPool().Put(buf)
+}
+
+// 缓冲区大小选择缓存
+var bufferSizeCache = make(map[string]int)
+var bufferSizeCacheMutex sync.RWMutex
+
+// GetOptimalBufferSize 根据文件大小和类型获取最优缓冲区大小
+func GetOptimalBufferSize(fileSize int64, fileExt string) int {
+	// 生成缓存键
+	cacheKey := fmt.Sprintf("%d_%s", fileSize/(1024*1024), fileExt) // 以MB为单位缓存
+
+	// 检查缓存
+	bufferSizeCacheMutex.RLock()
+	if cachedSize, exists := bufferSizeCache[cacheKey]; exists {
+		bufferSizeCacheMutex.RUnlock()
+		return cachedSize
+	}
+	bufferSizeCacheMutex.RUnlock()
+
+	// 基于文件大小的基础选择
+	var baseSize int
+
+	switch {
+	case fileSize < 1024*1024: // <1MB
+		baseSize = SmallBufferSize // 4KB
+	case fileSize < 10*1024*1024: // <10MB
+		baseSize = MediumBufferSize // 64KB
+	case fileSize < 100*1024*1024: // <100MB
+		baseSize = LargeBufferSize // 1MB
+	default: // >=100MB
+		baseSize = XLargeBufferSize // 4MB
+	}
+
+	// 基于文件类型的调整
+	switch fileExt {
+	case ".ncm", ".qmc", ".qmcflac", ".qmcogg":
+		// 加密音频文件，需要更多I/O缓冲
+		if baseSize < MediumBufferSize {
+			baseSize = MediumBufferSize
+		}
+	case ".kgm", ".vpr":
+		// 这些格式通常文件较大
+		if baseSize < LargeBufferSize {
+			baseSize = LargeBufferSize
+		}
+	case ".tm0", ".tm2", ".tm3", ".tm6":
+		// TM格式通常较小，使用小缓冲区即可
+		if baseSize > MediumBufferSize {
+			baseSize = MediumBufferSize
+		}
+	}
+
+	// 缓存结果
+	bufferSizeCacheMutex.Lock()
+	bufferSizeCache[cacheKey] = baseSize
+	bufferSizeCacheMutex.Unlock()
+
+	return baseSize
+}
+
+// GetOptimalBuffer 获取最优大小的缓冲区
+func GetOptimalBuffer(fileSize int64, fileExt string) []byte {
+	size := GetOptimalBufferSize(fileSize, fileExt)
+	return GetGlobalPool().Get(size)
 }

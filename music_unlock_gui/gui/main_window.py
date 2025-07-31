@@ -11,6 +11,8 @@ import threading
 import queue
 from typing import List, Optional
 
+
+
 from core.processor import FileProcessor
 from core.thread_manager import ThreadManager
 from core.constants import (
@@ -40,10 +42,11 @@ class MusicUnlockGUI:
         self.output_dir = ""
         self.file_list = []
         self.processing = False
-        
+
+
+
         # 创建组件
         self.setup_ui()
-        self.setup_drag_drop()
         
         # 初始化处理器和线程管理器（启用服务模式）
         self.processor = FileProcessor(um_exe_path, use_service_mode=True)
@@ -170,7 +173,7 @@ class MusicUnlockGUI:
         self.stop_button.pack(side=tk.LEFT)
         
         # 文件列表
-        list_frame = ttk.LabelFrame(main_frame, text="文件列表 (支持拖拽文件到此区域)", padding="5")
+        list_frame = ttk.LabelFrame(main_frame, text="文件列表", padding="5")
         list_frame.grid(row=2, column=0, columnspan=3, sticky=(tk.W, tk.E, tk.N, tk.S))
         list_frame.columnconfigure(0, weight=1)
         list_frame.rowconfigure(0, weight=1)
@@ -213,65 +216,9 @@ class MusicUnlockGUI:
         self.progress_bar = ttk.Progressbar(status_frame, variable=self.progress_var, maximum=100)
         self.progress_bar.grid(row=1, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(5, 0))
     
-    def setup_drag_drop(self):
-        """设置拖拽功能"""
-        # 使用tkinter原生事件处理拖拽
-        # 绑定拖拽相关事件
-        self.file_tree.bind('<Button-1>', self.on_drag_start)
-        self.file_tree.bind('<B1-Motion>', self.on_drag_motion)
-        self.file_tree.bind('<ButtonRelease-1>', self.on_drag_end)
 
-        # 绑定拖拽进入和离开事件
-        self.root.bind('<Enter>', self.on_drag_enter)
-        self.root.bind('<Leave>', self.on_drag_leave)
 
-        # 尝试使用Windows的拖拽API（如果可用）
-        try:
-            import windnd
-            windnd.hook_dropfiles(self.root, func=self.on_drop_files)
-        except ImportError:
-            # 如果windnd不可用，显示提示信息
-            self.setup_manual_drag_info()
 
-    def setup_manual_drag_info(self):
-        """设置手动拖拽提示信息"""
-        # 在文件列表框架中添加提示文本
-        info_label = ttk.Label(
-            self.file_tree.master,
-            text="提示：如果拖拽不工作，请使用'添加文件'或'添加文件夹'按钮",
-            foreground="gray"
-        )
-        info_label.grid(row=2, column=0, sticky=tk.W, pady=(5, 0))
-
-    def on_drop_files(self, files):
-        """处理Windows拖拽文件事件"""
-        try:
-            if isinstance(files, (list, tuple)):
-                self.add_files_to_list(files)
-            else:
-                self.add_files_to_list([files])
-        except Exception as e:
-            messagebox.showerror("错误", f"处理拖拽文件时出错：{str(e)}")
-
-    def on_drag_start(self, event):
-        """拖拽开始事件"""
-        pass
-
-    def on_drag_motion(self, event):
-        """拖拽移动事件"""
-        pass
-
-    def on_drag_end(self, event):
-        """拖拽结束事件"""
-        pass
-
-    def on_drag_enter(self, event):
-        """拖拽进入窗口事件"""
-        pass
-
-    def on_drag_leave(self, event):
-        """拖拽离开窗口事件"""
-        pass
     
     def on_output_mode_change(self):
         """输出模式变化处理"""

@@ -13,7 +13,7 @@ type Sniffer interface {
 
 var audioExtensions = map[string]Sniffer{
 	// ref: https://mimesniff.spec.whatwg.org
-	".mp3": prefixSniffer("ID3"), // todo: check mp3 without ID3v2 tag
+	".mp3": &mp3Sniffer{}, // Enhanced MP3 detection with and without ID3v2 tag
 	".ogg": prefixSniffer("OggS"),
 	".wav": prefixSniffer("RIFF"),
 
@@ -103,4 +103,71 @@ func readMpeg4FtypBox(header []byte) *mpeg4FtpyBox {
 	}
 
 	return &box
+}
+
+// mp3Sniffer detects MP3 files with or without ID3v2 tags
+type mp3Sniffer struct{}
+
+func (m *mp3Sniffer) Sniff(header []byte) bool {
+	if len(header) < 4 {
+		return false
+	}
+
+	// Check for ID3v2 tag first (most common)
+	if bytes.HasPrefix(header, []byte("ID3")) {
+		return true
+	}
+
+	// Check for MP3 frame header (for files without ID3v2 tag)
+	return m.isMP3FrameHeader(header)
+}
+
+// isMP3FrameHeader checks if the header contains a valid MP3 frame sync
+func (m *mp3Sniffer) isMP3FrameHeader(header []byte) bool {
+	// MP3 frame header starts with 11 bits of sync (all 1s): 0xFFE0 or higher
+	// We need at least 4 bytes to check the frame header
+	for i := 0; i <= len(header)-4; i++ {
+		if m.isValidMP3Frame(header[i:]) {
+			return true
+		}
+	}
+	return false
+}
+
+// isValidMP3Frame checks if 4 bytes represent a valid MP3 frame header
+func (m *mp3Sniffer) isValidMP3Frame(frame []byte) bool {
+	if len(frame) < 4 {
+		return false
+	}
+
+	// Check sync bits (first 11 bits should be all 1s)
+	if frame[0] != 0xFF || (frame[1]&0xE0) != 0xE0 {
+		return false
+	}
+
+	// Check MPEG version (bits 19-20)
+	version := (frame[1] >> 3) & 0x03
+	if version == 1 { // reserved version
+		return false
+	}
+
+	// Check layer (bits 17-18)
+	layer := (frame[1] >> 1) & 0x03
+	if layer == 0 { // reserved layer
+		return false
+	}
+
+	// Check bitrate (bits 12-15)
+	bitrate := (frame[2] >> 4) & 0x0F
+	if bitrate == 0 || bitrate == 15 { // free or reserved bitrate
+		return false
+	}
+
+	// Check sampling frequency (bits 10-11)
+	samplingFreq := (frame[2] >> 2) & 0x03
+	if samplingFreq == 3 { // reserved sampling frequency
+		return false
+	}
+
+	return true
 }

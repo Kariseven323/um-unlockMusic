@@ -283,43 +283,7 @@ def truncate_text(text: str, max_length: int, suffix: str = "...") -> str:
     return text[:max_length - len(suffix)] + suffix
 
 
-def parse_file_list_from_string(file_string: str) -> List[str]:
-    """
-    从字符串解析文件列表（用于拖拽功能）
-    
-    Args:
-        file_string: 文件路径字符串
-        
-    Returns:
-        List[str]: 文件路径列表
-    """
-    files = []
-    
-    # 处理多种可能的分隔符
-    if '\n' in file_string:
-        # 换行分隔
-        raw_files = file_string.split('\n')
-    elif '\r' in file_string:
-        # 回车分隔
-        raw_files = file_string.split('\r')
-    else:
-        # 空格分隔（可能有引号包围）
-        raw_files = []
-        current_file = ""
-        in_quotes = False
-        
-        for char in file_string:
-            if char == '"':
-                in_quotes = not in_quotes
-            elif char == ' ' and not in_quotes:
-                if current_file.strip():
-                    raw_files.append(current_file.strip())
-                current_file = ""
-            else:
-                current_file += char
-        
-        if current_file.strip():
-            raw_files.append(current_file.strip())
+
     
     # 清理和验证文件路径
     for file_path in raw_files:

@@ -58,6 +58,15 @@ func OptimizedCopy(dst io.Writer, src io.Reader) (written int64, err error) {
 	return io.CopyBuffer(dst, src, buf)
 }
 
+// OptimizedCopyWithSize 根据预估大小使用最优缓冲区的文件复制函数
+func OptimizedCopyWithSize(dst io.Writer, src io.Reader, estimatedSize int64, fileExt string) (written int64, err error) {
+	// 根据文件大小和类型选择最优缓冲区
+	buf := pool.GetOptimalBuffer(estimatedSize, fileExt)
+	defer pool.PutBuffer(buf)
+
+	return io.CopyBuffer(dst, src, buf)
+}
+
 // OptimizedWriteTempFile 使用优化I/O的临时文件写入
 func OptimizedWriteTempFile(rd io.Reader, ext string) (string, error) {
 	audioFile, err := os.CreateTemp("", "*"+ext)

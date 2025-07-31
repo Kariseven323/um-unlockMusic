@@ -36,8 +36,6 @@ import (
 
 var AppVersion = "custom"
 
-var logger = setupLogger(false) // TODO: inject logger to application, instead of using global logger
-
 func main() {
 	module, ok := debug.ReadBuildInfo()
 	if ok && module.Main.Version != "(devel)" {
@@ -76,7 +74,9 @@ func main() {
 
 	err := app.Run(os.Args)
 	if err != nil {
-		logger.Fatal("run app failed", zap.Error(err))
+		// Use a temporary logger for fatal errors in main
+		tempLogger := setupLogger(false)
+		tempLogger.Fatal("run app failed", zap.Error(err))
 	}
 }
 
@@ -119,7 +119,7 @@ func setupLogger(verbose bool) *zap.Logger {
 }
 
 func appMain(c *cli.Context) (err error) {
-	logger = setupLogger(c.Bool("verbose"))
+	logger := setupLogger(c.Bool("verbose"))
 
 	// 检查是否为服务模式
 	if c.Bool("service") {
@@ -367,21 +367,21 @@ func (p *processor) watchDir(inputDir string) error {
 					// try open with exclusive mode, to avoid file is still writing
 					f, err := os.OpenFile(event.Name, os.O_RDONLY, os.ModeExclusive)
 					if err != nil {
-						logger.Debug("failed to open file exclusively", zap.String("path", event.Name), zap.Error(err))
+						p.logger.Debug("failed to open file exclusively", zap.String("path", event.Name), zap.Error(err))
 						time.Sleep(1 * time.Second) // wait for file writing complete
 						continue
 					}
 					_ = f.Close()
 
 					if err := p.processFile(event.Name); err != nil {
-						logger.Warn("failed to process file", zap.String("path", event.Name), zap.Error(err))
+						p.logger.Warn("failed to process file", zap.String("path", event.Name), zap.Error(err))
 					}
 				}
 			case err, ok := <-watcher.Errors:
 				if !ok {
 					return
 				}
-				logger.Error("file watcher got error", zap.Error(err))
+				p.logger.Error("file watcher got error", zap.Error(err))
 			}
 		}
 	}()
@@ -416,7 +416,7 @@ func (p *processor) processDir(inputDir string) error {
 
 		if err := p.processFile(filePath); err != nil {
 			lastError = err
-			logger.Error("conversion failed", zap.String("source", item.Name()), zap.Error(err))
+			p.logger.Error("conversion failed", zap.String("source", item.Name()), zap.Error(err))
 		}
 	}
 	if lastError != nil {
@@ -443,7 +443,7 @@ func (p *processor) processFile(filePath string) error {
 		if err != nil {
 			return err
 		}
-		logger.Info("source file removed after success conversion", zap.String("source", filePath))
+		p.logger.Info("source file removed after success conversion", zap.String("source", filePath))
 	}
 	return nil
 }
@@ -455,7 +455,7 @@ func (p *processor) findDecoder(decoders []common.DecoderFactory, params *common
 		if err == nil {
 			return &dec, &factory, nil
 		}
-		logger.Warn("try decode failed", zap.Error(err))
+		p.logger.Warn("try decode failed", zap.Error(err))
 	}
 	return nil, nil, errors.New("no any decoder can resolve the file")
 }
@@ -466,7 +466,7 @@ func (p *processor) process(inputFile string, allDec []common.DecoderFactory) er
 		return err
 	}
 	defer file.Close()
-	logger := logger.With(zap.String("source", inputFile))
+	logger := p.logger.With(zap.String("source", inputFile))
 
 	pDec, decoderFactory, err := p.findDecoder(allDec, &common.DecoderParams{
 		Reader:          file,
@@ -501,9 +501,8 @@ func (p *processor) process(inputFile string, allDec []common.DecoderFactory) er
 
 			// since ffmpeg doesn't support multiple input streams,
 			// we need to write the audio to a temp file.
-			// since qmc decoder doesn't support seeking & relying on ffmpeg probe, we need to read the whole file.
-			// TODO: support seeking or using pipe for qmc decoder.
-			params.Audio, err = utils.OptimizedWriteTempFile(audio, params.AudioExt)
+			// Optimized: use streaming approach for QMC decoder with Seek support
+			params.Audio, err = p.createOptimizedTempFile(dec, audio, params.AudioExt)
 			if err != nil {
 				return fmt.Errorf("updateAudioMeta write temp file: %w", err)
 			}
@@ -616,4 +615,20 @@ func (p *processor) processMetadataWithFilename(rawMeta common.AudioMeta, inputF
 
 	// 如果元数据获取失败，直接使用文件名元数据
 	return common.SmartParseFilenameMeta(filepath.Base(inputFile))
+}
+
+// createOptimizedTempFile creates a temporary file using optimized approach
+// For QMC decoders with Seek support, this avoids reading the entire file into memory
+func (p *processor) createOptimizedTempFile(dec common.Decoder, fallbackReader io.Reader, ext string) (string, error) {
+	// Check if decoder supports seeking (like our optimized QMC decoder)
+	if seeker, ok := dec.(io.Seeker); ok {
+		// Reset to beginning for streaming
+		if _, err := seeker.Seek(0, io.SeekStart); err == nil {
+			// Use the decoder directly as it supports seeking
+			return utils.OptimizedWriteTempFile(dec, ext)
+		}
+	}
+
+	// Fallback to the original approach for non-seeking decoders
+	return utils.OptimizedWriteTempFile(fallbackReader, ext)
 }

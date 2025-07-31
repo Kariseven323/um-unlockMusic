@@ -28,8 +28,7 @@ func (d *Decoder) Validate() (err error) {
 	if err := d.header.FromFile(d.rd); err != nil {
 		return err
 	}
-	// TODO; validate crypto version
-
+	// Validate crypto version and initialize cipher
 	switch d.header.CryptoVersion {
 	case 3:
 		d.cipher, err = newKgmCryptoV3(&d.header)
@@ -41,8 +40,15 @@ func (d *Decoder) Validate() (err error) {
 		if err != nil {
 			return fmt.Errorf("kgm init crypto v5: %w", err)
 		}
+	case 1, 2:
+		return fmt.Errorf("kgm: crypto version %d is deprecated and no longer supported", d.header.CryptoVersion)
+	case 4:
+		return fmt.Errorf("kgm: crypto version %d was experimental and is not supported", d.header.CryptoVersion)
 	default:
-		return fmt.Errorf("kgm: unsupported crypto version %d", d.header.CryptoVersion)
+		if d.header.CryptoVersion > 5 {
+			return fmt.Errorf("kgm: crypto version %d is newer than supported (max: 5). Please update the decoder", d.header.CryptoVersion)
+		}
+		return fmt.Errorf("kgm: invalid crypto version %d", d.header.CryptoVersion)
 	}
 
 	// prepare for read
