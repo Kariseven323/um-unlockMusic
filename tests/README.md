@@ -23,13 +23,12 @@ tests/
 - `test_complete_functionality.py` - 完整功能测试
 - `test_formats.py` - 格式支持测试
 - `test_gui_batch_integration.py` - GUI批处理集成测试
-- `test_naming_functionality.py` - 文件命名功能测试
-- `test_performance_optimization.py` - 性能优化测试
-- `test_*_optimizations.py` - 各级别优化测试
+- `test_naming_format.py` - 文件命名格式测试
+- `test_filename_verification.py` - 文件名验证测试
+- `test_output_path.py` - 输出路径测试
 
 **Go 测试脚本**：
 - `test_basic_optimizations.go` - 基础优化测试
-- `test_optimizations_simple.go` - 简单优化测试
 
 ### data/ - 测试数据文件
 - `test.mflac` - 测试用的加密音频文件
@@ -37,14 +36,12 @@ tests/
 
 ### configs/ - 测试配置文件
 - `test_batch.json` - 批处理测试配置
-- `test_simple.json` - 简单测试配置
 - `test_real_file.json` - 真实文件测试配置
-- `test_batch_request.json` - 批处理请求配置
 
 ### reports/ - 测试报告文件
-- `performance_test_results.json` - 性能测试结果
 - `optimization_verification_report.md` - 优化验证报告
-- `*_optimization_report.*` - 各级别优化报告
+- `low_priority_optimization_report.md` - 低优先级优化报告
+- `medium_priority_optimization_report.md` - 中优先级优化报告
 
 ## 🚀 运行测试
 
@@ -81,8 +78,35 @@ done
 - 测试结果会保存在 `reports/` 目录中
 - 建议在测试前备份重要数据
 
+## 🧹 清理记录
+
+### 2025-01-31 测试文件清理
+**删除的重复测试脚本**：
+- `test_batch_fix.py`
+- `test_new_batch.py`
+- `test_simple_batch.py`
+- `test_optimizations.py`
+- `test_high_priority_optimizations.py`
+- `test_medium_priority_optimizations.py`
+- `test_low_priority_optimizations.py`
+- `test_performance_optimization.py`
+- `test_naming_functionality.py`
+
+**删除的重复配置文件**：
+- `test_batch_request.json`
+- `test_simple.json`
+
+**删除的过时报告文件**：
+- `low_priority_optimization_report.json`
+- `medium_priority_optimization_report.json`
+- `optimization_test_report.json`
+- `performance_test_results.json`
+
+**删除的根目录临时文件**：
+- `test_batch.json`
+- `test_jay_batch.json`
+
 ## 🔗 相关文档
 
 - [项目主文档](../README.md)
-- [性能优化总结](../OPTIMIZATION_SUMMARY.md)
-- [综合优化总结](../comprehensive_optimization_summary.md)
+- [项目整体优化分析](../issues/项目整体优化分析.md)

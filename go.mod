@@ -3,6 +3,7 @@ module unlock-music.dev/cli
 go 1.23.3
 
 require (
+	github.com/Microsoft/go-winio v0.6.2
 	github.com/fsnotify/fsnotify v1.8.0
 	github.com/go-flac/flacpicture v0.3.0
 	github.com/go-flac/flacvorbis v0.2.0

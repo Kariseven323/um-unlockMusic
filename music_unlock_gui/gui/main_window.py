@@ -45,8 +45,8 @@ class MusicUnlockGUI:
         self.setup_ui()
         self.setup_drag_drop()
         
-        # 初始化处理器和线程管理器
-        self.processor = FileProcessor(um_exe_path)
+        # 初始化处理器和线程管理器（启用服务模式）
+        self.processor = FileProcessor(um_exe_path, use_service_mode=True)
         self.thread_manager = ThreadManager(max_workers=DEFAULT_MAX_WORKERS)
 
         # 获取支持的格式列表

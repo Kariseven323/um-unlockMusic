@@ -61,6 +61,8 @@ func main() {
 			&cli.BoolFlag{Name: "overwrite", Usage: "overwrite output file without asking", Required: false, Value: false},
 			&cli.BoolFlag{Name: "watch", Usage: "watch the input dir and process new files", Required: false, Value: false},
 			&cli.BoolFlag{Name: "batch", Usage: "batch processing mode (read JSON from stdin)", Required: false, Value: false},
+			&cli.BoolFlag{Name: "service", Usage: "run as service mode (IPC communication)", Required: false, Value: false},
+			&cli.StringFlag{Name: "service-pipe", Usage: "service pipe name (Windows) or socket path (Unix)", Required: false, Value: ""},
 			&cli.StringFlag{Name: "naming-format", Usage: "output filename format: auto (smart detection), title-artist, artist-title, original", Required: false, Value: "auto"},
 
 			&cli.BoolFlag{Name: "supported-ext", Usage: "show supported file extensions and exit", Required: false, Value: false},
@@ -118,6 +120,12 @@ func setupLogger(verbose bool) *zap.Logger {
 
 func appMain(c *cli.Context) (err error) {
 	logger = setupLogger(c.Bool("verbose"))
+
+	// 检查是否为服务模式
+	if c.Bool("service") {
+		pipeName := c.String("service-pipe")
+		return runServiceMode(logger, pipeName)
+	}
 
 	// 检查是否为批处理模式
 	if c.Bool("batch") {
