@@ -145,8 +145,8 @@ func updateMetaFFmpeg(ctx context.Context, outPath string, params *UpdateMetadat
 
 	artists := params.Meta.GetArtists()
 	if len(artists) != 0 {
-		// TODO: it seems that ffmpeg doesn't support multiple artists
-		out.AddMetadata("", "artist", strings.Join(artists, " / "))
+		// Enhanced multi-artist support with format-specific handling
+		setMultipleArtists(out, artists, params.AudioExt)
 	}
 
 	if params.AudioExt == ".mp3" {
@@ -162,4 +162,47 @@ func updateMetaFFmpeg(ctx context.Context, outPath string, params *UpdateMetadat
 	}
 
 	return nil
+}
+
+// setMultipleArtists sets artist metadata with format-specific optimizations
+func setMultipleArtists(out *outputBuilder, artists []string, audioExt string) {
+	if len(artists) == 0 {
+		return
+	}
+
+	// For single artist, use standard approach
+	if len(artists) == 1 {
+		out.AddMetadata("", "artist", artists[0])
+		return
+	}
+
+	// Format-specific multi-artist handling
+	switch audioExt {
+	case ".mp3":
+		// ID3v2.3 supports multiple artist frames
+		// Use semicolon separator for better compatibility
+		out.AddMetadata("", "artist", strings.Join(artists, "; "))
+		// Also set albumartist for better player support
+		out.AddMetadata("", "albumartist", strings.Join(artists, "; "))
+
+	case ".flac":
+		// FLAC supports multiple ARTIST fields natively
+		// This will be handled in meta_flac.go, use standard format here
+		out.AddMetadata("", "artist", strings.Join(artists, "; "))
+
+	case ".m4a", ".mp4":
+		// MP4 supports multiple artists with proper atom structure
+		// Use semicolon separator for better compatibility
+		out.AddMetadata("", "artist", strings.Join(artists, "; "))
+		out.AddMetadata("", "albumartist", strings.Join(artists, "; "))
+
+	case ".ogg":
+		// Vorbis comments support multiple ARTIST fields
+		// Use semicolon separator for better compatibility
+		out.AddMetadata("", "artist", strings.Join(artists, "; "))
+
+	default:
+		// For other formats, use semicolon separator (better than " / ")
+		out.AddMetadata("", "artist", strings.Join(artists, "; "))
+	}
 }

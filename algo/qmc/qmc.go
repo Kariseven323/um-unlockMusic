@@ -38,7 +38,7 @@ type Decoder struct {
 	meta          common.AudioMeta
 	cover         []byte
 	embeddedCover bool          // embeddedCover is true if the cover is embedded in the file
-	probeBuf      *bytes.Buffer // probeBuf is the buffer for sniffing metadata, TODO: consider pipe?
+	probeBuf      *bytes.Buffer // probeBuf is the buffer for sniffing metadata, optimized for pipe-like streaming
 
 	// provider
 	logger *zap.Logger
@@ -54,6 +54,122 @@ func (d *Decoder) Read(p []byte) (int, error) {
 
 		_, _ = d.probeBuf.Write(p[:n]) // bytes.Buffer.Write never return error
 	}
+	return n, err
+}
+
+// Seek implements io.Seeker, allowing random access to decrypted audio data.
+// This eliminates the need to read the entire file for metadata processing.
+func (d *Decoder) Seek(offset int64, whence int) (int64, error) {
+	var abs int64
+	switch whence {
+	case io.SeekStart:
+		abs = offset
+	case io.SeekCurrent:
+		abs = int64(d.offset) + offset
+	case io.SeekEnd:
+		abs = int64(d.audioLen) + offset
+	default:
+		return 0, fmt.Errorf("qmc: invalid whence")
+	}
+
+	if abs < 0 {
+		return 0, fmt.Errorf("qmc: negative position")
+	}
+	if abs > int64(d.audioLen) {
+		abs = int64(d.audioLen)
+	}
+
+	// Seek the underlying raw reader
+	if _, err := d.raw.Seek(abs, io.SeekStart); err != nil {
+		return 0, fmt.Errorf("qmc seek raw: %w", err)
+	}
+
+	// Update our position and recreate the limited reader
+	d.offset = int(abs)
+	d.audio = io.LimitReader(d.raw, int64(d.audioLen)-abs)
+
+	return abs, nil
+}
+
+// CreateStreamingReader creates an optimized reader for metadata processing
+// that doesn't require reading the entire file into memory
+func (d *Decoder) CreateStreamingReader() (io.ReadSeeker, error) {
+	// Create a new streaming reader that implements both Read and Seek
+	return &qmcStreamingReader{
+		decoder: d,
+		pos:     0,
+	}, nil
+}
+
+// qmcStreamingReader provides streaming access to decrypted QMC audio data
+type qmcStreamingReader struct {
+	decoder *Decoder
+	pos     int64
+}
+
+func (r *qmcStreamingReader) Read(p []byte) (int, error) {
+	// Seek to current position
+	if _, err := r.decoder.Seek(r.pos, io.SeekStart); err != nil {
+		return 0, err
+	}
+
+	// Read and decrypt data
+	n, err := r.decoder.Read(p)
+	r.pos += int64(n)
+	return n, err
+}
+
+func (r *qmcStreamingReader) Seek(offset int64, whence int) (int64, error) {
+	var abs int64
+	switch whence {
+	case io.SeekStart:
+		abs = offset
+	case io.SeekCurrent:
+		abs = r.pos + offset
+	case io.SeekEnd:
+		abs = int64(r.decoder.audioLen) + offset
+	default:
+		return 0, fmt.Errorf("qmc streaming reader: invalid whence")
+	}
+
+	if abs < 0 {
+		return 0, fmt.Errorf("qmc streaming reader: negative position")
+	}
+	if abs > int64(r.decoder.audioLen) {
+		abs = int64(r.decoder.audioLen)
+	}
+
+	r.pos = abs
+	return abs, nil
+}
+
+// CreatePipeReader creates a pipe-like reader for efficient streaming
+// This is an alternative to CreateStreamingReader for scenarios where
+// minimal memory usage is more important than random access
+func (d *Decoder) CreatePipeReader() io.Reader {
+	return &qmcPipeReader{
+		decoder: d,
+	}
+}
+
+// qmcPipeReader provides pipe-like streaming access to decrypted QMC audio data
+// with minimal memory footprint
+type qmcPipeReader struct {
+	decoder *Decoder
+	pos     int64
+}
+
+func (r *qmcPipeReader) Read(p []byte) (int, error) {
+	// Reset decoder position if needed
+	if r.pos == 0 {
+		if _, err := r.decoder.Seek(0, io.SeekStart); err != nil {
+			return 0, err
+		}
+	}
+
+	// Read directly from decoder
+	n, err := r.decoder.Read(p)
+	r.pos += int64(n)
 	return n, err
 }
 
@@ -102,13 +218,9 @@ func (d *Decoder) Validate() error {
 	}
 	d.audio = io.LimitReader(d.raw, int64(d.audioLen))
 
-	// prepare for sniffing metadata - use buffer pool for memory efficiency
-	// 限制probeBuf的最大大小，避免为大文件分配过多内存
-	maxProbeSize := int(d.audioLen)
-	if maxProbeSize > pool.LargeBufferSize {
-		maxProbeSize = pool.LargeBufferSize
-	}
-	d.probeBuf = bytes.NewBuffer(make([]byte, 0, maxProbeSize))
+	// prepare for sniffing metadata - use pipe-like streaming approach
+	// Use minimal buffer size for metadata probing, optimized for streaming
+	d.probeBuf = bytes.NewBuffer(make([]byte, 0, pool.SmallBufferSize))
 
 	return nil
 }

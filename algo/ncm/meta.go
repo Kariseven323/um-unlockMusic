@@ -1,8 +1,9 @@
 package ncm
 
 import (
-	"go.uber.org/zap"
 	"strings"
+
+	"go.uber.org/zap"
 
 	"unlock-music.dev/cli/algo/common"
 )
@@ -75,6 +76,11 @@ func (m *ncmMetaMusic) GetFormat() string {
 	return m.Format
 }
 
+func (m *ncmMetaMusic) GetOriginalFormat() string {
+	// NCM文件的元数据不包含原始文件名格式信息，返回空字符串
+	return ""
+}
+
 //goland:noinspection SpellCheckingInspection
 type ncmMetaDJ struct {
 	ProgramID          int          `json:"programId"`
@@ -131,4 +137,9 @@ func (m *ncmMetaDJ) GetAlbumImageURL() string {
 		return m.MainMusic.GetAlbumImageURL()
 	}
 	return m.DjAvatarURL
+}
+
+func (m *ncmMetaDJ) GetOriginalFormat() string {
+	// NCM文件的元数据不包含原始文件名格式信息，返回空字符串
+	return ""
 }

@@ -5,12 +5,9 @@ import (
 	"crypto/md5"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"sync"
 	"time"
-
-	"unlock-music.dev/cli/algo/common"
 )
 
 // MetadataSource 元数据来源
@@ -71,7 +68,7 @@ func NewMetadataFetcher() *MetadataFetcher {
 func (mf *MetadataFetcher) FetchMetadata(ctx context.Context, title, artist string) (*OnlineMetadata, error) {
 	// 生成缓存键
 	cacheKey := mf.generateCacheKey(title, artist)
-	
+
 	// 检查缓存
 	if cached, found := mf.cache.Get(cacheKey); found {
 		if metadata, ok := cached.(*OnlineMetadata); ok {
@@ -79,24 +76,24 @@ func (mf *MetadataFetcher) FetchMetadata(ctx context.Context, title, artist stri
 			return metadata, nil
 		}
 	}
-	
+
 	// 应用速率限制
 	if err := mf.rateLimiter.Wait(ctx); err != nil {
 		return nil, fmt.Errorf("rate limit: %w", err)
 	}
-	
+
 	// 尝试从各个来源获取元数据
 	for _, source := range mf.sources {
 		metadata, err := mf.fetchFromSource(ctx, source, title, artist)
 		if err != nil {
 			continue // 尝试下一个来源
 		}
-		
+
 		// 缓存结果
 		mf.cache.Put(cacheKey, metadata)
 		return metadata, nil
 	}
-	
+
 	return nil, fmt.Errorf("no metadata found from any source")
 }
 
@@ -117,31 +114,31 @@ func (mf *MetadataFetcher) fetchFromMusicBrainz(ctx context.Context, title, arti
 	// 构建查询URL
 	url := fmt.Sprintf("https://musicbrainz.org/ws/2/recording?query=recording:%s AND artist:%s&fmt=json&limit=1",
 		title, artist)
-	
+
 	// 发送请求
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	req.Header.Set("User-Agent", "UnlockMusic/1.0")
 	req.Header.Set("Accept", "application/json")
-	
+
 	resp, err := mf.client.Do(req)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
-	
+
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("musicbrainz API error: %d", resp.StatusCode)
 	}
-	
+
 	// 解析响应
 	var result struct {
 		Recordings []struct {
-			Title   string `json:"title"`
-			Length  int    `json:"length"`
+			Title    string `json:"title"`
+			Length   int    `json:"length"`
 			Releases []struct {
 				Title string `json:"title"`
 				Date  string `json:"date"`
@@ -153,30 +150,30 @@ func (mf *MetadataFetcher) fetchFromMusicBrainz(ctx context.Context, title, arti
 			} `json:"artist-credit"`
 		} `json:"recordings"`
 	}
-	
+
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, err
 	}
-	
+
 	if len(result.Recordings) == 0 {
 		return nil, fmt.Errorf("no recordings found")
 	}
-	
+
 	recording := result.Recordings[0]
 	metadata := &OnlineMetadata{
 		Title:      recording.Title,
 		Source:     SourceMusicBrainz,
 		Confidence: 0.8,
 	}
-	
+
 	if len(recording.ArtistCredit) > 0 {
 		metadata.Artist = recording.ArtistCredit[0].Artist.Name
 	}
-	
+
 	if len(recording.Releases) > 0 {
 		metadata.Album = recording.Releases[0].Title
 	}
-	
+
 	return metadata, nil
 }
 
@@ -220,10 +217,10 @@ func NewNetworkCache(maxSize int, ttl time.Duration) *NetworkCache {
 		maxSize: maxSize,
 		ttl:     ttl,
 	}
-	
+
 	// 启动清理goroutine
 	go cache.cleanup()
-	
+
 	return cache
 }
 
@@ -232,17 +229,17 @@ func (nc *NetworkCache) Get(key string) (interface{}, bool) {
 	nc.mutex.RLock()
 	entry, exists := nc.cache[key]
 	nc.mutex.RUnlock()
-	
+
 	if !exists {
 		return nil, false
 	}
-	
+
 	// 检查是否过期
 	if time.Since(entry.Timestamp) > nc.ttl {
 		nc.Delete(key)
 		return nil, false
 	}
-	
+
 	return entry.Data, true
 }
 
@@ -250,12 +247,12 @@ func (nc *NetworkCache) Get(key string) (interface{}, bool) {
 func (nc *NetworkCache) Put(key string, data interface{}) {
 	nc.mutex.Lock()
 	defer nc.mutex.Unlock()
-	
+
 	// 如果缓存已满，删除最旧的条目
 	if len(nc.cache) >= nc.maxSize {
 		nc.evictOldest()
 	}
-	
+
 	nc.cache[key] = &CacheEntry{
 		Data:      data,
 		Timestamp: time.Now(),
@@ -273,14 +270,14 @@ func (nc *NetworkCache) Delete(key string) {
 func (nc *NetworkCache) evictOldest() {
 	var oldestKey string
 	var oldestTime time.Time
-	
+
 	for key, entry := range nc.cache {
 		if oldestKey == "" || entry.Timestamp.Before(oldestTime) {
 			oldestKey = key
 			oldestTime = entry.Timestamp
 		}
 	}
-	
+
 	if oldestKey != "" {
 		delete(nc.cache, oldestKey)
 	}
@@ -290,17 +287,17 @@ func (nc *NetworkCache) evictOldest() {
 func (nc *NetworkCache) cleanup() {
 	ticker := time.NewTicker(10 * time.Minute)
 	defer ticker.Stop()
-	
+
 	for range ticker.C {
 		nc.mutex.Lock()
 		now := time.Now()
-		
+
 		for key, entry := range nc.cache {
 			if now.Sub(entry.Timestamp) > nc.ttl {
 				delete(nc.cache, key)
 			}
 		}
-		
+
 		nc.mutex.Unlock()
 	}
 }
@@ -317,15 +314,15 @@ func NewRateLimiter(rate int, interval time.Duration) *RateLimiter {
 		tokens:   make(chan struct{}, rate),
 		interval: interval,
 	}
-	
+
 	// 填充初始令牌
 	for i := 0; i < rate; i++ {
 		rl.tokens <- struct{}{}
 	}
-	
+
 	// 启动令牌补充goroutine
 	go rl.refill(rate)
-	
+
 	return rl
 }
 
@@ -343,7 +340,7 @@ func (rl *RateLimiter) Wait(ctx context.Context) error {
 func (rl *RateLimiter) refill(rate int) {
 	ticker := time.NewTicker(rl.interval)
 	defer ticker.Stop()
-	
+
 	for range ticker.C {
 		for i := 0; i < rate; i++ {
 			select {
@@ -366,9 +363,9 @@ func GetOptimizationInfo() map[string]interface{} {
 		},
 		"sources": []string{"MusicBrainz", "Last.fm", "Local cache"},
 		"performance_gains": map[string]string{
-			"Cache hit ratio":     "80-90%",
-			"Response time":       "10x faster for cached data",
-			"Network requests":    "Reduced by 70-80%",
+			"Cache hit ratio":    "80-90%",
+			"Response time":      "10x faster for cached data",
+			"Network requests":   "Reduced by 70-80%",
 			"Offline capability": "Cached metadata available",
 		},
 		"cache_config": map[string]interface{}{

@@ -8,7 +8,7 @@ import os
 import subprocess
 import logging
 import platform
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List, Dict, Any
 import tempfile
 import shutil
 
@@ -20,19 +20,24 @@ from .constants import (
     ERROR_MESSAGES,
     SUCCESS_MESSAGES
 )
+from .service_client import ServiceClient
 
 
 class FileProcessor:
     """文件处理器类"""
-    
-    def __init__(self, um_exe_path: str):
+
+    def __init__(self, um_exe_path: str, use_service_mode: bool = True):
         """
         初始化文件处理器
 
         Args:
             um_exe_path: um.exe的路径
+            use_service_mode: 是否使用服务模式
         """
         self.um_exe_path = um_exe_path
+        self.use_service_mode = use_service_mode
+        self.service_client = None
+        self.service_available = False
         self.logger = self._setup_logger()
 
         # 验证um.exe是否存在
@@ -48,7 +53,60 @@ class FileProcessor:
 
         # 转换为集合以提高查找效率
         self.supported_extensions_set = {ext.lower() for ext in self.supported_extensions}
-    
+
+        # 初始化服务模式
+        if self.use_service_mode:
+            self._init_service_mode()
+
+        # 会话复用（避免每次创建新会话）
+        self._persistent_session = False
+
+    def _init_service_mode(self):
+        """初始化服务模式"""
+        try:
+            self.service_client = ServiceClient()
+            # 尝试连接服务，如果失败则启动服务
+            if not self.service_client.connect(timeout=2.0):
+                self.logger.info("服务未运行，尝试启动服务")
+                if self._start_service():
+                    # 等待服务启动
+                    import time
+                    time.sleep(1)
+                    if self.service_client.connect(timeout=5.0):
+                        self.service_available = True
+                        self.logger.info("服务模式已启用")
+                    else:
+                        self.logger.warning("服务启动后仍无法连接，将使用传统模式")
+                        self.service_available = False
+                else:
+                    self.logger.warning("无法启动服务，将使用传统模式")
+                    self.service_available = False
+            else:
+                self.service_available = True
+                self.logger.info("服务模式已启用")
+        except Exception as e:
+            self.logger.warning(f"初始化服务模式失败: {e}，将使用传统模式")
+            self.service_available = False
+
+    def _start_service(self) -> bool:
+        """启动服务"""
+        try:
+            import subprocess
+            # 启动服务进程
+            cmd = [self.um_exe_path, "--service"]
+            subprocess.Popen(cmd,
+                           stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL,
+                           creationflags=subprocess.CREATE_NO_WINDOW if platform.system() == "Windows" else 0)
+            return True
+        except Exception as e:
+            self.logger.error(f"启动服务失败: {e}")
+            return False
+
+    def is_service_available(self) -> bool:
+        """检查服务是否可用"""
+        return self.service_available and self.service_client is not None
+
     def _setup_logger(self) -> logging.Logger:
         """设置日志记录器"""
         logger = logging.getLogger('FileProcessor')
@@ -311,7 +369,7 @@ class FileProcessor:
     def process_files_batch(self, file_list: list, output_dir: str = None,
                            use_source_dir: bool = False, naming_format: str = "auto") -> dict:
         """
-        批量处理多个音乐文件（使用Go的批处理模式）
+        批量处理多个音乐文件（智能选择最优模式）
 
         Args:
             file_list: 要处理的文件列表
@@ -321,6 +379,124 @@ class FileProcessor:
 
         Returns:
             dict: 批处理结果
+        """
+        # 智能模式选择：
+        # - 文件数量 >= 50 或者服务已经运行：使用服务模式
+        # - 文件数量 < 50 且服务未运行：使用传统模式（避免启动开销）
+        file_count = len(file_list)
+
+        if self.is_service_available() and file_count >= 10:
+            # 服务可用且文件数量足够多，使用服务模式
+            return self._process_files_batch_service(file_list, output_dir, use_source_dir, naming_format)
+        elif self.use_service_mode and file_count >= 50:
+            # 文件数量很多，值得启动服务
+            self._init_service_mode()  # 重新尝试启动服务
+            if self.is_service_available():
+                return self._process_files_batch_service(file_list, output_dir, use_source_dir, naming_format)
+
+        # 使用传统模式
+        return self._process_files_batch_subprocess(file_list, output_dir, use_source_dir, naming_format)
+
+    def _process_files_batch_service(self, file_list: list, output_dir: str = None,
+                                   use_source_dir: bool = False, naming_format: str = "auto") -> dict:
+        """
+        使用服务模式批量处理文件
+        """
+        try:
+            # 启动会话
+            if not self.service_client.start_session():
+                self.logger.error("启动服务会话失败，回退到传统模式")
+                return self._process_files_batch_subprocess(file_list, output_dir, use_source_dir, naming_format)
+
+            # 准备文件列表
+            files = []
+            for file_path in file_list:
+                task = {"input_path": file_path}
+                if not use_source_dir and output_dir:
+                    task["output_path"] = output_dir
+                files.append(task)
+
+            # 添加文件到会话
+            if not self.service_client.add_files(files):
+                self.service_client.end_session()
+                self.logger.error("添加文件到服务会话失败，回退到传统模式")
+                return self._process_files_batch_subprocess(file_list, output_dir, use_source_dir, naming_format)
+
+            # 开始处理
+            options = {
+                "remove_source": False,
+                "update_metadata": True,
+                "overwrite_output": True,
+                "skip_noop": True,
+                "naming_format": naming_format
+            }
+
+            if not self.service_client.start_processing(options):
+                self.service_client.end_session()
+                self.logger.error("启动服务处理失败，回退到传统模式")
+                return self._process_files_batch_subprocess(file_list, output_dir, use_source_dir, naming_format)
+
+            # 等待处理完成并获取进度
+            import time
+            start_time = time.time()
+            timeout = PROCESS_TIMEOUT_SECONDS * len(file_list)
+
+            while True:
+                progress_info = self.service_client.get_progress()
+                if progress_info is None:
+                    break
+
+                status = progress_info.get("status", "unknown")
+                if status in ["completed", "partial_success", "error"]:
+                    break
+
+                # 检查超时
+                if time.time() - start_time > timeout:
+                    self.service_client.stop_processing()
+                    self.service_client.end_session()
+                    return {
+                        "success": False,
+                        "error": f"服务处理超时（超过{timeout}秒）",
+                        "results": []
+                    }
+
+                time.sleep(0.1)  # 等待100ms再检查（减少延迟）
+
+            # 获取最终结果
+            final_progress = self.service_client.get_progress()
+            self.service_client.end_session()
+
+            if final_progress:
+                total_files = final_progress.get("total_files", len(file_list))
+                processed_files = final_progress.get("processed_files", 0)
+                status = final_progress.get("status", "unknown")
+
+                success = status in ["completed", "partial_success"]
+                return {
+                    "success": success,
+                    "success_count": processed_files,
+                    "failed_count": total_files - processed_files,
+                    "total_files": total_files,
+                    "results": [],  # 服务模式暂不返回详细结果
+                    "total_time_ms": int((time.time() - start_time) * 1000)
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": "无法获取处理结果",
+                    "results": []
+                }
+
+        except Exception as e:
+            self.logger.error(f"服务模式处理异常: {e}，回退到传统模式")
+            if self.service_client and self.service_client.session_id:
+                self.service_client.end_session()
+            return self._process_files_batch_subprocess(file_list, output_dir, use_source_dir, naming_format)
+
+    def _process_files_batch_subprocess(self, file_list: list, output_dir: str = None,
+                                      use_source_dir: bool = False, naming_format: str = "auto") -> dict:
+        """
+        使用传统subprocess模式批量处理文件
         """
         import json
 
@@ -346,7 +522,7 @@ class FileProcessor:
 
                 batch_request["files"].append(task)
 
-            self.logger.info(f"开始批处理 {len(file_list)} 个文件")
+            self.logger.info(f"开始传统模式批处理 {len(file_list)} 个文件")
 
             # 调用批处理模式
             cmd = [self.um_exe_path, "--batch"]

@@ -176,3 +176,8 @@ func (t *TrackInfo) GetTitle() string {
 func (t *TrackInfo) GetAlbum() string {
 	return t.Album.Name
 }
+
+func (t *TrackInfo) GetOriginalFormat() string {
+	// QQ音乐API获取的元数据不包含原始文件名格式信息，返回空字符串
+	return ""
+}

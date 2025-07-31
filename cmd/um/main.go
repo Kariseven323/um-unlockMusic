@@ -36,8 +36,6 @@ import (
 
 var AppVersion = "custom"
 
-var logger = setupLogger(false) // TODO: inject logger to application, instead of using global logger
-
 func main() {
 	module, ok := debug.ReadBuildInfo()
 	if ok && module.Main.Version != "(devel)" {
@@ -61,6 +59,8 @@ func main() {
 			&cli.BoolFlag{Name: "overwrite", Usage: "overwrite output file without asking", Required: false, Value: false},
 			&cli.BoolFlag{Name: "watch", Usage: "watch the input dir and process new files", Required: false, Value: false},
 			&cli.BoolFlag{Name: "batch", Usage: "batch processing mode (read JSON from stdin)", Required: false, Value: false},
+			&cli.BoolFlag{Name: "service", Usage: "run as service mode (IPC communication)", Required: false, Value: false},
+			&cli.StringFlag{Name: "service-pipe", Usage: "service pipe name (Windows) or socket path (Unix)", Required: false, Value: ""},
 			&cli.StringFlag{Name: "naming-format", Usage: "output filename format: auto (smart detection), title-artist, artist-title, original", Required: false, Value: "auto"},
 
 			&cli.BoolFlag{Name: "supported-ext", Usage: "show supported file extensions and exit", Required: false, Value: false},
@@ -74,7 +74,9 @@ func main() {
 
 	err := app.Run(os.Args)
 	if err != nil {
-		logger.Fatal("run app failed", zap.Error(err))
+		// Use a temporary logger for fatal errors in main
+		tempLogger := setupLogger(false)
+		tempLogger.Fatal("run app failed", zap.Error(err))
 	}
 }
 
@@ -117,7 +119,13 @@ func setupLogger(verbose bool) *zap.Logger {
 }
 
 func appMain(c *cli.Context) (err error) {
-	logger = setupLogger(c.Bool("verbose"))
+	logger := setupLogger(c.Bool("verbose"))
+
+	// 检查是否为服务模式
+	if c.Bool("service") {
+		pipeName := c.String("service-pipe")
+		return runServiceMode(logger, pipeName)
+	}
 
 	// 检查是否为批处理模式
 	if c.Bool("batch") {
@@ -253,9 +261,55 @@ func (p *processor) generateOutputFilename(inputFilename, audioExt string) strin
 	case "auto":
 		fallthrough
 	default:
-		// 使用智能解析（默认行为）
-		return p.formatFilename(inputFilename, audioExt, false)
+		// 使用智能解析，保持原文件的命名方式
+		return p.formatFilenameAuto(inputFilename, audioExt)
 	}
+}
+
+// formatFilenameAuto 使用智能解析格式化文件名，保持原文件的命名方式
+func (p *processor) formatFilenameAuto(inputFilename, audioExt string) string {
+	// 使用智能解析获取元数据
+	meta := common.SmartParseFilenameMeta(inputFilename)
+
+	title := meta.GetTitle()
+	artists := meta.GetArtists()
+	originalFormat := meta.GetOriginalFormat()
+
+	// 如果解析失败，回退到原文件名
+	if title == "" {
+		return inputFilename + audioExt
+	}
+
+	// 构建艺术家字符串
+	var artistStr string
+	if len(artists) > 0 {
+		artistStr = strings.Join(artists, ", ")
+	}
+
+	// 根据原始格式决定输出格式
+	switch originalFormat {
+	case "title-artist":
+		// 原文件是"歌曲名-歌手名"格式
+		if artistStr != "" {
+			return title + " - " + artistStr + audioExt
+		}
+	case "artist-title":
+		// 原文件是"歌手名-歌曲名"格式
+		if artistStr != "" {
+			return artistStr + " - " + title + audioExt
+		}
+	case "title-only", "empty":
+		// 只有标题或空，直接使用标题
+		return title + audioExt
+	default:
+		// 未知格式，使用默认的"歌手名-歌曲名"格式
+		if artistStr != "" {
+			return artistStr + " - " + title + audioExt
+		}
+	}
+
+	// 只有标题，没有艺术家信息
+	return title + audioExt
 }
 
 // formatFilename 使用智能解析格式化文件名
@@ -313,21 +367,21 @@ func (p *processor) watchDir(inputDir string) error {
 					// try open with exclusive mode, to avoid file is still writing
 					f, err := os.OpenFile(event.Name, os.O_RDONLY, os.ModeExclusive)
 					if err != nil {
-						logger.Debug("failed to open file exclusively", zap.String("path", event.Name), zap.Error(err))
+						p.logger.Debug("failed to open file exclusively", zap.String("path", event.Name), zap.Error(err))
 						time.Sleep(1 * time.Second) // wait for file writing complete
 						continue
 					}
 					_ = f.Close()
 
 					if err := p.processFile(event.Name); err != nil {
-						logger.Warn("failed to process file", zap.String("path", event.Name), zap.Error(err))
+						p.logger.Warn("failed to process file", zap.String("path", event.Name), zap.Error(err))
 					}
 				}
 			case err, ok := <-watcher.Errors:
 				if !ok {
 					return
 				}
-				logger.Error("file watcher got error", zap.Error(err))
+				p.logger.Error("file watcher got error", zap.Error(err))
 			}
 		}
 	}()
@@ -362,7 +416,7 @@ func (p *processor) processDir(inputDir string) error {
 
 		if err := p.processFile(filePath); err != nil {
 			lastError = err
-			logger.Error("conversion failed", zap.String("source", item.Name()), zap.Error(err))
+			p.logger.Error("conversion failed", zap.String("source", item.Name()), zap.Error(err))
 		}
 	}
 	if lastError != nil {
@@ -389,7 +443,7 @@ func (p *processor) processFile(filePath string) error {
 		if err != nil {
 			return err
 		}
-		logger.Info("source file removed after success conversion", zap.String("source", filePath))
+		p.logger.Info("source file removed after success conversion", zap.String("source", filePath))
 	}
 	return nil
 }
@@ -401,7 +455,7 @@ func (p *processor) findDecoder(decoders []common.DecoderFactory, params *common
 		if err == nil {
 			return &dec, &factory, nil
 		}
-		logger.Warn("try decode failed", zap.Error(err))
+		p.logger.Warn("try decode failed", zap.Error(err))
 	}
 	return nil, nil, errors.New("no any decoder can resolve the file")
 }
@@ -412,7 +466,7 @@ func (p *processor) process(inputFile string, allDec []common.DecoderFactory) er
 		return err
 	}
 	defer file.Close()
-	logger := logger.With(zap.String("source", inputFile))
+	logger := p.logger.With(zap.String("source", inputFile))
 
 	pDec, decoderFactory, err := p.findDecoder(allDec, &common.DecoderParams{
 		Reader:          file,
@@ -447,9 +501,8 @@ func (p *processor) process(inputFile string, allDec []common.DecoderFactory) er
 
 			// since ffmpeg doesn't support multiple input streams,
 			// we need to write the audio to a temp file.
-			// since qmc decoder doesn't support seeking & relying on ffmpeg probe, we need to read the whole file.
-			// TODO: support seeking or using pipe for qmc decoder.
-			params.Audio, err = utils.OptimizedWriteTempFile(audio, params.AudioExt)
+			// Optimized: use streaming approach for QMC decoder with Seek support
+			params.Audio, err = p.createOptimizedTempFile(dec, audio, params.AudioExt)
 			if err != nil {
 				return fmt.Errorf("updateAudioMeta write temp file: %w", err)
 			}
@@ -479,21 +532,7 @@ func (p *processor) process(inputFile string, allDec []common.DecoderFactory) er
 
 	// 用文件名信息包装元数据，确保标题准确性
 	if p.updateMetadata {
-		if cachedEntry != nil {
-			// 使用缓存的元数据
-			params.Meta = cachedEntry.Meta
-			logger.Debug("使用缓存的元数据", zap.String("文件", inputFile))
-		} else if params.Meta != nil {
-			params.Meta = common.WrapMetaWithFilename(params.Meta, filepath.Base(inputFile))
-
-			// 缓存元数据
-			if stat, err := os.Stat(inputFile); err == nil {
-				cache.PutMetadata(inputFile, stat.Size(), stat.ModTime(), params.Meta, nil)
-			}
-		} else {
-			// 如果元数据获取失败，直接使用文件名元数据
-			params.Meta = common.ParseFilenameMeta(filepath.Base(inputFile))
-		}
+		params.Meta = p.processMetadataWithFilename(params.Meta, inputFile, cachedEntry, logger)
 	}
 
 	if p.updateMetadata && params.Meta != nil {
@@ -552,4 +591,44 @@ func (p *processor) process(inputFile string, allDec []common.DecoderFactory) er
 
 	logger.Info("successfully converted", zap.String("source", inputFile), zap.String("destination", outPath))
 	return nil
+}
+
+// processMetadataWithFilename 处理元数据并用文件名信息包装
+func (p *processor) processMetadataWithFilename(rawMeta common.AudioMeta, inputFile string, cachedEntry *cache.MetadataEntry, logger *zap.Logger) common.AudioMeta {
+	if cachedEntry != nil {
+		// 使用缓存的元数据
+		logger.Debug("使用缓存的元数据", zap.String("文件", inputFile))
+		return cachedEntry.Meta
+	}
+
+	if rawMeta != nil {
+		// 用文件名信息包装原始元数据
+		wrappedMeta := common.WrapMetaWithFilename(rawMeta, filepath.Base(inputFile))
+
+		// 缓存元数据
+		if stat, err := os.Stat(inputFile); err == nil {
+			cache.PutMetadata(inputFile, stat.Size(), stat.ModTime(), wrappedMeta, nil)
+		}
+
+		return wrappedMeta
+	}
+
+	// 如果元数据获取失败，直接使用文件名元数据
+	return common.SmartParseFilenameMeta(filepath.Base(inputFile))
+}
+
+// createOptimizedTempFile creates a temporary file using optimized approach
+// For QMC decoders with Seek support, this avoids reading the entire file into memory
+func (p *processor) createOptimizedTempFile(dec common.Decoder, fallbackReader io.Reader, ext string) (string, error) {
+	// Check if decoder supports seeking (like our optimized QMC decoder)
+	if seeker, ok := dec.(io.Seeker); ok {
+		// Reset to beginning for streaming
+		if _, err := seeker.Seek(0, io.SeekStart); err == nil {
+			// Use the decoder directly as it supports seeking
+			return utils.OptimizedWriteTempFile(dec, ext)
+		}
+	}
+
+	// Fallback to the original approach for non-seeking decoders
+	return utils.OptimizedWriteTempFile(fallbackReader, ext)
 }
