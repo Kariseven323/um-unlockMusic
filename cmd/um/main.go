@@ -253,9 +253,55 @@ func (p *processor) generateOutputFilename(inputFilename, audioExt string) strin
 	case "auto":
 		fallthrough
 	default:
-		// 使用智能解析（默认行为）
-		return p.formatFilename(inputFilename, audioExt, false)
+		// 使用智能解析，保持原文件的命名方式
+		return p.formatFilenameAuto(inputFilename, audioExt)
 	}
+}
+
+// formatFilenameAuto 使用智能解析格式化文件名，保持原文件的命名方式
+func (p *processor) formatFilenameAuto(inputFilename, audioExt string) string {
+	// 使用智能解析获取元数据
+	meta := common.SmartParseFilenameMeta(inputFilename)
+
+	title := meta.GetTitle()
+	artists := meta.GetArtists()
+	originalFormat := meta.GetOriginalFormat()
+
+	// 如果解析失败，回退到原文件名
+	if title == "" {
+		return inputFilename + audioExt
+	}
+
+	// 构建艺术家字符串
+	var artistStr string
+	if len(artists) > 0 {
+		artistStr = strings.Join(artists, ", ")
+	}
+
+	// 根据原始格式决定输出格式
+	switch originalFormat {
+	case "title-artist":
+		// 原文件是"歌曲名-歌手名"格式
+		if artistStr != "" {
+			return title + " - " + artistStr + audioExt
+		}
+	case "artist-title":
+		// 原文件是"歌手名-歌曲名"格式
+		if artistStr != "" {
+			return artistStr + " - " + title + audioExt
+		}
+	case "title-only", "empty":
+		// 只有标题或空，直接使用标题
+		return title + audioExt
+	default:
+		// 未知格式，使用默认的"歌手名-歌曲名"格式
+		if artistStr != "" {
+			return artistStr + " - " + title + audioExt
+		}
+	}
+
+	// 只有标题，没有艺术家信息
+	return title + audioExt
 }
 
 // formatFilename 使用智能解析格式化文件名
@@ -479,21 +525,7 @@ func (p *processor) process(inputFile string, allDec []common.DecoderFactory) er
 
 	// 用文件名信息包装元数据，确保标题准确性
 	if p.updateMetadata {
-		if cachedEntry != nil {
-			// 使用缓存的元数据
-			params.Meta = cachedEntry.Meta
-			logger.Debug("使用缓存的元数据", zap.String("文件", inputFile))
-		} else if params.Meta != nil {
-			params.Meta = common.WrapMetaWithFilename(params.Meta, filepath.Base(inputFile))
-
-			// 缓存元数据
-			if stat, err := os.Stat(inputFile); err == nil {
-				cache.PutMetadata(inputFile, stat.Size(), stat.ModTime(), params.Meta, nil)
-			}
-		} else {
-			// 如果元数据获取失败，直接使用文件名元数据
-			params.Meta = common.ParseFilenameMeta(filepath.Base(inputFile))
-		}
+		params.Meta = p.processMetadataWithFilename(params.Meta, inputFile, cachedEntry, logger)
 	}
 
 	if p.updateMetadata && params.Meta != nil {
@@ -552,4 +584,28 @@ func (p *processor) process(inputFile string, allDec []common.DecoderFactory) er
 
 	logger.Info("successfully converted", zap.String("source", inputFile), zap.String("destination", outPath))
 	return nil
+}
+
+// processMetadataWithFilename 处理元数据并用文件名信息包装
+func (p *processor) processMetadataWithFilename(rawMeta common.AudioMeta, inputFile string, cachedEntry *cache.MetadataEntry, logger *zap.Logger) common.AudioMeta {
+	if cachedEntry != nil {
+		// 使用缓存的元数据
+		logger.Debug("使用缓存的元数据", zap.String("文件", inputFile))
+		return cachedEntry.Meta
+	}
+
+	if rawMeta != nil {
+		// 用文件名信息包装原始元数据
+		wrappedMeta := common.WrapMetaWithFilename(rawMeta, filepath.Base(inputFile))
+
+		// 缓存元数据
+		if stat, err := os.Stat(inputFile); err == nil {
+			cache.PutMetadata(inputFile, stat.Size(), stat.ModTime(), wrappedMeta, nil)
+		}
+
+		return wrappedMeta
+	}
+
+	// 如果元数据获取失败，直接使用文件名元数据
+	return common.SmartParseFilenameMeta(filepath.Base(inputFile))
 }

@@ -22,6 +22,7 @@ type AudioMeta interface {
 	GetArtists() []string
 	GetTitle() string
 	GetAlbum() string
+	GetOriginalFormat() string
 }
 
 type AudioMetaGetter interface {

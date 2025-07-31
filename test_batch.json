@@ -1,0 +1,10 @@
+{
+  "files": [
+    {"input_path": "test.mflac"}
+  ],
+  "options": {
+    "update_metadata": true,
+    "overwrite_output": true,
+    "naming_format": "auto"
+  }
+}

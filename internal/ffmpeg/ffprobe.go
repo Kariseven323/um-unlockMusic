@@ -60,6 +60,11 @@ func (r *Result) HasMetadata() bool {
 	return r.GetTitle() != "" || r.GetAlbum() != "" || len(r.GetArtists()) > 0
 }
 
+func (r *Result) GetOriginalFormat() string {
+	// FFmpeg探测的元数据不包含原始文件名格式信息，返回空字符串
+	return ""
+}
+
 type Format struct {
 	Filename       string            `json:"filename"`
 	NbStreams      int               `json:"nb_streams"`

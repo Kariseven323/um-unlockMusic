@@ -8,9 +8,10 @@ import (
 )
 
 type filenameMeta struct {
-	artists []string
-	title   string
-	album   string
+	artists        []string
+	title          string
+	album          string
+	originalFormat string
 }
 
 func (f *filenameMeta) GetArtists() []string {
@@ -23,6 +24,10 @@ func (f *filenameMeta) GetTitle() string {
 
 func (f *filenameMeta) GetAlbum() string {
 	return f.album
+}
+
+func (f *filenameMeta) GetOriginalFormat() string {
+	return f.originalFormat
 }
 
 func ParseFilenameMeta(filename string) (meta AudioMeta) {
@@ -82,6 +87,11 @@ func (m *metaWrapper) GetArtists() []string {
 	return m.filename.GetArtists()
 }
 
+func (m *metaWrapper) GetOriginalFormat() string {
+	// 原始格式信息优先使用文件名中的格式
+	return m.filename.GetOriginalFormat()
+}
+
 // WrapMetaWithFilename 用文件名信息包装原始元数据，优化标题准确性
 func WrapMetaWithFilename(original AudioMeta, filename string) AudioMeta {
 	if original == nil {
@@ -130,6 +140,7 @@ func SmartParseFilenameMeta(filename string) AudioMeta {
 		// no-op
 	case 1:
 		ret.title = strings.TrimSpace(items[0])
+		ret.originalFormat = "title-only"
 	default:
 		// 智能识别两个部分的角色
 		part1 := strings.TrimSpace(items[0])
@@ -138,11 +149,14 @@ func SmartParseFilenameMeta(filename string) AudioMeta {
 		// 边界情况：如果任一部分为空，使用非空部分作为标题
 		if part1 == "" && part2 != "" {
 			ret.title = part2
+			ret.originalFormat = "title-only"
 			return ret
 		} else if part2 == "" && part1 != "" {
 			ret.title = part1
+			ret.originalFormat = "title-only"
 			return ret
 		} else if part1 == "" && part2 == "" {
+			ret.originalFormat = "empty"
 			return ret
 		}
 
@@ -151,22 +165,27 @@ func SmartParseFilenameMeta(filename string) AudioMeta {
 			// part1明显是艺术家且part2不是 (如: "周杰伦 - 晴天")
 			ret.artists = []string{part1}
 			ret.title = part2
+			ret.originalFormat = "artist-title"
 		} else if quickIdentifyArtist(part2) && !quickIdentifyArtist(part1) {
 			// part2明显是艺术家且part1不是 (如: "晴天 - 周杰伦")
 			ret.title = part1
 			ret.artists = []string{part2}
+			ret.originalFormat = "title-artist"
 		} else if isLikelyArtistName(part1) && isLikelySongTitle(part2) {
 			// 启发式判断：艺术家 - 标题
 			ret.artists = []string{part1}
 			ret.title = part2
+			ret.originalFormat = "artist-title"
 		} else if isLikelySongTitle(part1) && isLikelyArtistName(part2) {
 			// 启发式判断：标题 - 艺术家
 			ret.title = part1
 			ret.artists = []string{part2}
+			ret.originalFormat = "title-artist"
 		} else {
 			// 无法确定，使用默认格式（艺术家 - 标题）
 			ret.artists = []string{part1}
 			ret.title = part2
+			ret.originalFormat = "artist-title"
 		}
 
 		// 处理多个艺术家的情况

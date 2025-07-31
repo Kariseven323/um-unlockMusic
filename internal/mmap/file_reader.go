@@ -1,3 +1,6 @@
+//go:build linux || darwin
+// +build linux darwin
+
 package mmap
 
 import (
@@ -6,7 +9,6 @@ import (
 	"os"
 	"runtime"
 	"syscall"
-	"unsafe"
 )
 
 // MmapReader 内存映射文件读取器
@@ -31,7 +33,7 @@ func NewMmapReader(filename string) (*MmapReader, error) {
 	}
 
 	size := stat.Size()
-	
+
 	// 对于小文件（<1MB），不使用mmap
 	if size < 1024*1024 {
 		file.Close()
@@ -226,7 +228,7 @@ func NewOptimizedFileReader(filename string) (*OptimizedFileReader, error) {
 	}
 
 	size := stat.Size()
-	
+
 	// 对于大文件（>=1MB）且在支持的平台上，尝试使用mmap
 	if size >= 1024*1024 && runtime.GOOS != "windows" {
 		mmapReader, err := NewMmapReader(filename)
@@ -298,9 +300,9 @@ func (ofr *OptimizedFileReader) IsUsingMmap() bool {
 // GetOptimizationInfo 获取优化信息
 func GetOptimizationInfo() map[string]interface{} {
 	return map[string]interface{}{
-		"platform":        runtime.GOOS,
-		"mmap_supported":  runtime.GOOS != "windows",
-		"min_file_size":   "1MB",
+		"platform":       runtime.GOOS,
+		"mmap_supported": runtime.GOOS != "windows",
+		"min_file_size":  "1MB",
 		"benefits": []string{
 			"Zero-copy file access",
 			"Reduced memory allocation",
