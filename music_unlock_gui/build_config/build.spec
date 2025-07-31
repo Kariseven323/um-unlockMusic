@@ -35,6 +35,30 @@ else:
 
 block_cipher = None
 
+# 获取tkinterdnd2路径
+try:
+    import tkinterdnd2
+    tkinterdnd2_dir = os.path.dirname(tkinterdnd2.__file__)
+    tkdnd_dir = os.path.join(tkinterdnd2_dir, 'tkdnd')
+    print(f"找到tkinterdnd2目录: {tkinterdnd2_dir}")
+
+    # 准备tkinterdnd2数据文件
+    tkinterdnd2_datas = [
+        # 包含整个tkdnd目录
+        (tkdnd_dir, 'tkinterdnd2/tkdnd'),
+    ]
+
+    # 添加隐藏导入
+    tkinterdnd2_hiddenimports = [
+        'tkinterdnd2',
+        'tkinterdnd2.TkinterDnD',
+    ]
+
+except ImportError:
+    print("警告: 未找到tkinterdnd2库，拖拽功能将不可用")
+    tkinterdnd2_datas = []
+    tkinterdnd2_hiddenimports = []
+
 a = Analysis(
     [os.path.join(gui_dir, 'main.py')],
     pathex=[project_root],
@@ -42,8 +66,8 @@ a = Analysis(
     datas=[
         # 将um.exe打包到程序中
         (um_exe_path, '.'),
-    ],
-    hiddenimports=[],
+    ] + tkinterdnd2_datas,
+    hiddenimports=tkinterdnd2_hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
