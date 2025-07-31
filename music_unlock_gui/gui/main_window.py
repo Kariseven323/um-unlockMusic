@@ -11,6 +11,14 @@ import threading
 import queue
 from typing import List, Optional
 
+# 拖拽功能支持
+try:
+    from tkinterdnd2 import DND_FILES, DND_ALL, TkinterDnD
+    DRAG_DROP_AVAILABLE = True
+except ImportError:
+    DRAG_DROP_AVAILABLE = False
+    TkinterDnD = None
+
 from core.processor import FileProcessor
 from core.thread_manager import ThreadManager
 from core.constants import (
@@ -40,7 +48,9 @@ class MusicUnlockGUI:
         self.output_dir = ""
         self.file_list = []
         self.processing = False
-        
+
+        # 拖拽支持已在创建窗口时初始化（如果使用 TkinterDnD.Tk）
+
         # 创建组件
         self.setup_ui()
         self.setup_drag_drop()
@@ -88,6 +98,9 @@ class MusicUnlockGUI:
         self.root.title(UI_WINDOW_TITLE)
         self.root.geometry(UI_WINDOW_SIZE)
         self.root.minsize(*UI_WINDOW_MIN_SIZE)
+
+        # 配置拖拽样式
+        self._setup_drag_styles()
         
         # 主框架
         main_frame = ttk.Frame(self.root, padding="10")
@@ -212,25 +225,27 @@ class MusicUnlockGUI:
         self.progress_var = tk.DoubleVar()
         self.progress_bar = ttk.Progressbar(status_frame, variable=self.progress_var, maximum=100)
         self.progress_bar.grid(row=1, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(5, 0))
-    
+
+    def _setup_drag_styles(self):
+        """设置拖拽相关的样式"""
+        if DRAG_DROP_AVAILABLE:
+            style = ttk.Style()
+            # 配置拖拽进入时的样式
+            style.configure('DragEnter.Treeview',
+                          fieldbackground='lightblue',
+                          background='lightblue')
+
     def setup_drag_drop(self):
         """设置拖拽功能"""
-        # 使用tkinter原生事件处理拖拽
-        # 绑定拖拽相关事件
-        self.file_tree.bind('<Button-1>', self.on_drag_start)
-        self.file_tree.bind('<B1-Motion>', self.on_drag_motion)
-        self.file_tree.bind('<ButtonRelease-1>', self.on_drag_end)
-
-        # 绑定拖拽进入和离开事件
-        self.root.bind('<Enter>', self.on_drag_enter)
-        self.root.bind('<Leave>', self.on_drag_leave)
-
-        # 尝试使用Windows的拖拽API（如果可用）
-        try:
-            import windnd
-            windnd.hook_dropfiles(self.root, func=self.on_drop_files)
-        except ImportError:
-            # 如果windnd不可用，显示提示信息
+        if DRAG_DROP_AVAILABLE:
+            # 使用 tkinterdnd2 设置拖拽功能
+            # 在整个窗口上设置拖拽
+            self.root.drop_target_register(DND_ALL)
+            self.root.dnd_bind('<<Drop>>', self.on_drop_files)
+            self.root.dnd_bind('<<DragEnter>>', self.on_drag_enter)
+            self.root.dnd_bind('<<DragLeave>>', self.on_drag_leave)
+        else:
+            # 如果拖拽库不可用，显示提示信息
             self.setup_manual_drag_info()
 
     def setup_manual_drag_info(self):
@@ -243,35 +258,109 @@ class MusicUnlockGUI:
         )
         info_label.grid(row=2, column=0, sticky=tk.W, pady=(5, 0))
 
-    def on_drop_files(self, files):
-        """处理Windows拖拽文件事件"""
+    def on_drop_files(self, event):
+        """处理拖拽文件事件"""
         try:
-            if isinstance(files, (list, tuple)):
-                self.add_files_to_list(files)
+            # 获取拖拽的文件路径，处理各种格式
+            dropped_data = event.data
+            print(f"原始拖拽数据: {dropped_data}")  # 调试信息
+
+            # 清理拖拽数据中的特殊字符
+            dropped_file = dropped_data.replace("{", "").replace("}", "").strip()
+
+            # 解析多个文件（支持多种分隔符）
+            files = []
+            if '\n' in dropped_file:
+                files = dropped_file.split('\n')
+            elif '\r' in dropped_file:
+                files = dropped_file.split('\r')
+            elif ' ' in dropped_file and len(dropped_file.split(' ')) > 1:
+                # 处理空格分隔的多个文件路径
+                potential_files = dropped_file.split(' ')
+                for f in potential_files:
+                    if os.path.exists(f.strip()):
+                        files.append(f.strip())
+                if not files:  # 如果按空格分割没有找到有效文件，当作单个文件处理
+                    files = [dropped_file]
             else:
-                self.add_files_to_list([files])
+                files = [dropped_file]
+
+            # 过滤和处理文件
+            valid_files = []
+            invalid_files = []
+
+            for file_path in files:
+                file_path = file_path.strip().strip('"').strip("'")  # 移除引号和空白
+                if not file_path:
+                    continue
+
+                if os.path.isfile(file_path):
+                    # 单个文件
+                    if self.processor.is_supported_file(file_path):
+                        valid_files.append(file_path)
+                    else:
+                        invalid_files.append(file_path)
+                elif os.path.isdir(file_path):
+                    # 文件夹 - 扫描其中的音乐文件
+                    folder_files = self.scan_directory(file_path)
+                    valid_files.extend(folder_files)
+                else:
+                    print(f"路径不存在: {file_path}")  # 调试信息
+
+            # 提供详细的反馈
+            if valid_files:
+                self.add_files_to_list(valid_files)
+                status_msg = f"成功添加 {len(valid_files)} 个文件"
+                if invalid_files:
+                    status_msg += f"，跳过 {len(invalid_files)} 个不支持的文件"
+                self.update_status(status_msg)
+                return "copy"  # 返回成功的拖拽动作
+            else:
+                if invalid_files:
+                    messagebox.showinfo("提示",
+                        f"拖拽的 {len(invalid_files)} 个文件都不是支持的音乐格式\n"
+                        f"支持的格式：{', '.join(sorted(self.processor.supported_extensions))}")
+                else:
+                    messagebox.showinfo("提示", "拖拽的文件中没有找到支持的音乐格式")
+                return "copy"  # 即使没有有效文件，也返回成功以避免禁止标志
+
         except Exception as e:
-            messagebox.showerror("错误", f"处理拖拽文件时出错：{str(e)}")
-
-    def on_drag_start(self, event):
-        """拖拽开始事件"""
-        pass
-
-    def on_drag_motion(self, event):
-        """拖拽移动事件"""
-        pass
-
-    def on_drag_end(self, event):
-        """拖拽结束事件"""
-        pass
+            error_msg = f"处理拖拽文件时出错：{str(e)}"
+            messagebox.showerror("错误", error_msg)
+            print(f"拖拽处理错误: {e}")  # 调试信息
+            import traceback
+            traceback.print_exc()  # 打印完整错误堆栈
+            return "copy"  # 即使出错，也返回动作以避免禁止标志
 
     def on_drag_enter(self, event):
-        """拖拽进入窗口事件"""
-        pass
+        """处理拖拽进入事件"""
+        try:
+            # 改变窗口标题提示用户
+            original_title = self.root.title()
+            if "拖拽文件到此处" not in original_title:
+                self.root.title(f"{original_title} - 拖拽文件到此处")
+            return "copy"
+        except Exception as e:
+            print(f"拖拽进入事件错误: {e}")
+            return "copy"
 
     def on_drag_leave(self, event):
-        """拖拽离开窗口事件"""
-        pass
+        """处理拖拽离开事件"""
+        try:
+            # 恢复原始窗口标题
+            title = self.root.title()
+            if " - 拖拽文件到此处" in title:
+                self.root.title(title.replace(" - 拖拽文件到此处", ""))
+            return "copy"
+        except Exception as e:
+            print(f"拖拽离开事件错误: {e}")
+            return "copy"
+
+
+
+
+
+
     
     def on_output_mode_change(self):
         """输出模式变化处理"""

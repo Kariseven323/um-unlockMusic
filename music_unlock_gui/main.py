@@ -10,6 +10,22 @@ import os
 import tkinter as tk
 from tkinter import messagebox
 
+# 拖拽功能支持
+try:
+    from tkinterdnd2 import TkinterDnD
+    DRAG_DROP_AVAILABLE = True
+
+    # 创建支持拖拽的 Tk 类
+    class DnDTk(tk.Tk, TkinterDnD.DnDWrapper):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.TkdndVersion = TkinterDnD._require(self)
+
+except ImportError:
+    DRAG_DROP_AVAILABLE = False
+    TkinterDnD = None
+    DnDTk = None
+
 # 添加项目路径到sys.path
 current_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, current_dir)
@@ -48,8 +64,11 @@ def main():
             )
             return
         
-        # 创建主窗口
-        root = tk.Tk()
+        # 创建主窗口（支持拖拽）
+        if DRAG_DROP_AVAILABLE:
+            root = DnDTk()
+        else:
+            root = tk.Tk()
         app = MusicUnlockGUI(root, um_exe_path)
         
         # 设置窗口关闭事件
