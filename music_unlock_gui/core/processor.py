@@ -508,7 +508,7 @@ class FileProcessor:
             # 开始处理
             options = {
                 "remove_source": False,
-                "update_metadata": True,
+                "update_metadata": False,
                 "overwrite_output": True,
                 "skip_noop": True,
                 "naming_format": naming_format
@@ -589,7 +589,7 @@ class FileProcessor:
                 "files": [],
                 "options": {
                     "remove_source": False,
-                    "update_metadata": True,
+                    "update_metadata": False,
                     "overwrite_output": True,
                     "skip_noop": True,
                     "naming_format": naming_format

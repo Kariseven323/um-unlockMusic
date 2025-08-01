@@ -452,6 +452,8 @@ func (bp *batchProcessor) processBatchPipeline(request *BatchRequest) *BatchResp
 		response.Results[result.index] = result.result
 		if result.result.Success {
 			response.SuccessCount++
+		} else {
+			response.FailedCount++
 		}
 	}
 
