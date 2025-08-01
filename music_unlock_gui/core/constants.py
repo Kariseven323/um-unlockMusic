@@ -74,6 +74,28 @@ PLATFORM_FORMAT_GROUPS = {
     }
 }
 
+# 解密后的输出格式
+OUTPUT_FORMATS = {
+    "音频格式": {
+        "formats": [".mp3", ".flac", ".ogg", ".m4a", ".wav", ".aac"],
+        "description": "解密后生成的音频文件格式"
+    }
+}
+
+# 删除工具相关常量
+DELETE_TOOL_MESSAGES = {
+    'no_formats_selected': "请至少选择一种文件格式",
+    'no_folder_selected': "请选择要处理的文件夹",
+    'folder_not_exists': "所选文件夹不存在",
+    'scan_started': "开始扫描文件...",
+    'scan_completed': "扫描完成",
+    'delete_started': "开始删除文件...",
+    'delete_completed': "删除操作完成",
+    'delete_cancelled': "删除操作已取消",
+    'confirm_delete': "确认删除 {} 个文件？\n\n此操作不可撤销！",
+    'no_files_found': "未找到符合条件的文件"
+}
+
 # 输出模式常量
 OUTPUT_MODE_SOURCE = "source"
 OUTPUT_MODE_CUSTOM = "custom"
@@ -96,6 +118,11 @@ NAMING_FORMAT_LABELS = {
 UI_WINDOW_TITLE = "音乐解密工具 - Unlock Music GUI"
 UI_WINDOW_SIZE = "900x700"
 UI_WINDOW_MIN_SIZE = (800, 600)
+
+# 删除工具窗口常量
+DELETE_TOOL_WINDOW_TITLE = "文件删除工具"
+DELETE_TOOL_WINDOW_SIZE = "800x600"
+DELETE_TOOL_WINDOW_MIN_SIZE = (700, 500)
 
 # 处理相关常量
 DEFAULT_MAX_WORKERS = 6

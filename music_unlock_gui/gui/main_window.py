@@ -45,9 +45,6 @@ class MusicUnlockGUI:
 
 
 
-        # 创建组件
-        self.setup_ui()
-        
         # 初始化处理器和线程管理器（启用服务模式，获得更好的性能）
         self.processor = FileProcessor(um_exe_path, use_service_mode=True)
         self.thread_manager = ThreadManager(max_workers=DEFAULT_MAX_WORKERS)
@@ -57,7 +54,38 @@ class MusicUnlockGUI:
 
         # 消息队列用于线程间通信
         self.message_queue = queue.Queue()
+
+        # 创建组件（在初始化处理器之后）
+        self.setup_ui()
+
+        # 开始检查队列
         self.check_queue()
+
+    def create_menu_bar(self):
+        """创建菜单栏"""
+        menubar = tk.Menu(self.root)
+        self.root.config(menu=menubar)
+
+        # 帮助菜单
+        help_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="帮助", menu=help_menu)
+        help_menu.add_command(label="关于", command=self.show_about)
+
+
+
+    def show_about(self):
+        """显示关于对话框"""
+        about_text = """音乐解密工具 - Unlock Music GUI
+
+版本：1.0.0
+作者：Kariseven323
+
+这是一个用于解密各种加密音乐文件的工具，
+支持网易云音乐、QQ音乐、酷狗音乐等多种格式。
+
+GitHub: https://github.com/Kariseven323/um-unlockMusic"""
+
+        messagebox.showinfo("关于", about_text)
 
     def _generate_file_types(self) -> List[tuple]:
         """
@@ -91,19 +119,42 @@ class MusicUnlockGUI:
         self.root.title(UI_WINDOW_TITLE)
         self.root.geometry(UI_WINDOW_SIZE)
         self.root.minsize(*UI_WINDOW_MIN_SIZE)
-        
-        # 主框架
+
+        # 创建菜单栏
+        self.create_menu_bar()
+
+        # 创建主框架
         main_frame = ttk.Frame(self.root, padding="10")
         main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
-        
+
         # 配置网格权重
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
-        main_frame.columnconfigure(1, weight=1)
-        main_frame.rowconfigure(2, weight=1)
+        main_frame.columnconfigure(0, weight=1)
+        main_frame.rowconfigure(0, weight=1)
+
+        # 创建标签页控件
+        self.notebook = ttk.Notebook(main_frame)
+        self.notebook.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+
+        # 创建解密功能标签页
+        self.create_decrypt_tab()
+
+        # 创建文件清理标签页
+        self.create_cleanup_tab()
+        
+    def create_decrypt_tab(self):
+        """创建解密功能标签页"""
+        # 创建解密标签页框架
+        decrypt_frame = ttk.Frame(self.notebook, padding="10")
+        self.notebook.add(decrypt_frame, text="🔓 音乐解密")
+
+        # 配置网格权重
+        decrypt_frame.columnconfigure(1, weight=1)
+        decrypt_frame.rowconfigure(2, weight=1)
         
         # 输出目录选择
-        output_frame = ttk.LabelFrame(main_frame, text="输出设置", padding="5")
+        output_frame = ttk.LabelFrame(decrypt_frame, text="输出设置", padding="5")
         output_frame.grid(row=0, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(0, 10))
         output_frame.columnconfigure(1, weight=1)
 
@@ -156,7 +207,7 @@ class MusicUnlockGUI:
         self.on_output_mode_change()
 
         # 文件操作按钮
-        button_frame = ttk.Frame(main_frame)
+        button_frame = ttk.Frame(decrypt_frame)
         button_frame.grid(row=1, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(0, 10))
         
         ttk.Button(button_frame, text="添加文件", command=self.add_files).pack(side=tk.LEFT, padx=(0, 5))
@@ -173,7 +224,7 @@ class MusicUnlockGUI:
         self.stop_button.pack(side=tk.LEFT)
         
         # 文件列表
-        list_frame = ttk.LabelFrame(main_frame, text="文件列表", padding="5")
+        list_frame = ttk.LabelFrame(decrypt_frame, text="文件列表", padding="5")
         list_frame.grid(row=2, column=0, columnspan=3, sticky=(tk.W, tk.E, tk.N, tk.S))
         list_frame.columnconfigure(0, weight=1)
         list_frame.rowconfigure(0, weight=1)
@@ -203,18 +254,40 @@ class MusicUnlockGUI:
         scrollbar_x.grid(row=1, column=0, sticky=(tk.W, tk.E))
         
         # 状态栏
-        status_frame = ttk.Frame(main_frame)
+        status_frame = ttk.Frame(decrypt_frame)
         status_frame.grid(row=3, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(10, 0))
         status_frame.columnconfigure(1, weight=1)
-        
+
         ttk.Label(status_frame, text="状态:").grid(row=0, column=0, sticky=tk.W)
         self.status_var = tk.StringVar(value="就绪")
         ttk.Label(status_frame, textvariable=self.status_var).grid(row=0, column=1, sticky=tk.W, padx=(5, 0))
-        
+
         # 进度条
         self.progress_var = tk.DoubleVar()
         self.progress_bar = ttk.Progressbar(status_frame, variable=self.progress_var, maximum=100)
         self.progress_bar.grid(row=1, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(5, 0))
+
+    def create_cleanup_tab(self):
+        """创建文件清理标签页"""
+        # 创建清理标签页框架
+        cleanup_frame = ttk.Frame(self.notebook, padding="10")
+        self.notebook.add(cleanup_frame, text="🗑️ 文件清理")
+
+        # 导入并创建删除工具组件
+        try:
+            from gui.delete_tool_window import DeleteToolEmbedded
+
+            # 创建删除工具的内嵌版本
+            self.delete_tool = DeleteToolEmbedded(cleanup_frame, self.supported_extensions)
+
+        except ImportError as e:
+            # 如果导入失败，显示错误信息
+            error_label = ttk.Label(cleanup_frame, text=f"无法加载文件清理功能：{str(e)}")
+            error_label.pack(expand=True)
+        except Exception as e:
+            # 处理其他可能的错误
+            error_label = ttk.Label(cleanup_frame, text=f"文件清理功能初始化失败：{str(e)}")
+            error_label.pack(expand=True)
     
 
 
