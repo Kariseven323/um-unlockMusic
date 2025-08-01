@@ -146,73 +146,13 @@ func newBatchProcessor(options ProcessOptions, logger *zap.Logger) *batchProcess
 	}
 }
 
-// processBatch 处理批量任务（并发版本）
+// processBatch 处理批量任务（统一使用流水线模式）
 func (bp *batchProcessor) processBatch(request *BatchRequest) *BatchResponse {
 	// 根据实际文件信息动态调整worker数量
 	bp.optimizeWorkerCount(request.Files)
 
-	// 如果启用流水线并发且文件数量足够多，使用流水线模式
-	if bp.enablePipeline && len(request.Files) >= 4 {
-		return bp.processBatchPipeline(request)
-	}
-
-	// 否则使用传统并发模式
-	startTime := time.Now()
-
-	response := &BatchResponse{
-		Results:    make([]ProcessResult, len(request.Files)),
-		TotalFiles: len(request.Files),
-	}
-
-	// 计算任务优先级并排序
-	bp.calculateTaskPriorities(request.Files)
-	bp.sortTasksByPriority(request.Files)
-
-	bp.logger.Info("开始并发批处理",
-		zap.Int("文件数量", len(request.Files)),
-		zap.Int("并发数", bp.maxWorkers))
-
-	// 创建工作通道
-	taskChan := make(chan taskWithIndex, len(request.Files))
-	resultChan := make(chan resultWithIndex, len(request.Files))
-
-	// 启动工作协程
-	var wg sync.WaitGroup
-	for i := 0; i < bp.maxWorkers; i++ {
-		wg.Add(1)
-		go bp.worker(&wg, taskChan, resultChan)
-	}
-
-	// 发送任务
-	for i, task := range request.Files {
-		taskChan <- taskWithIndex{index: i, task: task}
-	}
-	close(taskChan)
-
-	// 等待所有工作完成
-	go func() {
-		wg.Wait()
-		close(resultChan)
-	}()
-
-	// 收集结果
-	for result := range resultChan {
-		response.Results[result.index] = result.result
-		if result.result.Success {
-			response.SuccessCount++
-		} else {
-			response.FailedCount++
-		}
-	}
-
-	response.TotalTime = time.Since(startTime).Milliseconds()
-
-	bp.logger.Info("并发批处理完成",
-		zap.Int("成功", response.SuccessCount),
-		zap.Int("失败", response.FailedCount),
-		zap.Int64("总耗时(ms)", response.TotalTime))
-
-	return response
+	// 统一使用流水线模式
+	return bp.processBatchPipeline(request)
 }
 
 // processFileTask 处理单个文件任务

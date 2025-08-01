@@ -466,7 +466,7 @@ class FileProcessor:
     def process_files_batch(self, file_list: list, output_dir: str = None,
                            use_source_dir: bool = False, naming_format: str = "auto") -> dict:
         """
-        批量处理多个音乐文件（智能选择最优模式）
+        批量处理多个音乐文件
 
         Args:
             file_list: 要处理的文件列表
@@ -477,49 +477,8 @@ class FileProcessor:
         Returns:
             dict: 批处理结果
         """
-        # 模式选择：如果启用了服务模式，优先使用服务模式
-        file_count = len(file_list)
-
-        if self.use_service_mode:
-            # 如果启用了服务模式，优先使用服务模式
-            if self.is_service_available():
-                # 服务已可用，直接使用
-                return self._process_files_batch_service(file_list, output_dir, use_source_dir, naming_format)
-            else:
-                # 服务不可用，尝试启动服务
-                self._init_service_mode()
-                if self.is_service_available():
-                    return self._process_files_batch_service(file_list, output_dir, use_source_dir, naming_format)
-                else:
-                    self.logger.warning("服务模式启动失败，回退到传统模式")
-
-        # 使用传统模式，如果失败则回退到单文件模式
-        batch_result = self._process_files_batch_subprocess(file_list, output_dir, use_source_dir, naming_format)
-
-        # 检查是否因为ffmpeg问题导致批处理失败
-        has_ffmpeg_error = False
-
-        # 检查整体错误信息
-        if batch_result.get('error'):
-            error_msg = str(batch_result.get('error', '')).lower()
-            if 'ffmpeg' in error_msg:
-                has_ffmpeg_error = True
-
-        # 检查各个文件的错误信息
-        if not has_ffmpeg_error:
-            for result in batch_result.get('results', []):
-                if not result.get('success', True):
-                    file_error = str(result.get('error', '')).lower()
-                    if 'ffmpeg' in file_error:
-                        has_ffmpeg_error = True
-                        break
-
-        # 如果检测到ffmpeg错误，回退到单文件模式
-        if has_ffmpeg_error:
-            self.logger.warning("批处理因ffmpeg问题失败，回退到单文件处理模式")
-            return self._process_files_individual(file_list, output_dir, use_source_dir, naming_format)
-
-        return batch_result
+        # 直接使用批处理模式
+        return self._process_files_batch_subprocess(file_list, output_dir, use_source_dir, naming_format)
 
     def _process_files_batch_service(self, file_list: list, output_dir: str = None,
                                    use_source_dir: bool = False, naming_format: str = "auto") -> dict:
