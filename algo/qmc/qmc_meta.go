@@ -32,14 +32,12 @@ func (d *Decoder) GetAudioMeta(ctx context.Context) (common.AudioMeta, error) {
 	d.meta = embedMeta
 	d.embeddedCover = embedMeta.HasAttachedPic()
 
-	// 禁用在线搜索，直接使用嵌入的元数据
-	// 这样可以保留文件名中的特殊标识（如Live、Remix等）
-	// if !d.embeddedCover && embedMeta.HasMetadata() {
-	//	if err := d.searchMetaOnline(ctx, embedMeta); err != nil {
-	//		return nil, err
-	//	}
-	//	return d.meta, nil
-	// }
+	if !d.embeddedCover && embedMeta.HasMetadata() {
+		if err := d.searchMetaOnline(ctx, embedMeta); err != nil {
+			return nil, err
+		}
+		return d.meta, nil
+	}
 
 	return d.meta, nil
 }

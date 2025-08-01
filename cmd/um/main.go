@@ -55,7 +55,7 @@ func main() {
 			&cli.BoolFlag{Name: "remove-source", Aliases: []string{"rs"}, Usage: "remove source file", Required: false, Value: false},
 			&cli.BoolFlag{Name: "skip-noop", Aliases: []string{"n"}, Usage: "skip noop decoder", Required: false, Value: true},
 			&cli.BoolFlag{Name: "verbose", Aliases: []string{"V"}, Usage: "verbose logging", Required: false, Value: false},
-			&cli.BoolFlag{Name: "update-metadata", Usage: "update metadata & album art from network", Required: false, Value: false},
+			&cli.BoolFlag{Name: "update-metadata", Usage: "update metadata & album art from network", Required: false, Value: true},
 			&cli.BoolFlag{Name: "overwrite", Usage: "overwrite output file without asking", Required: false, Value: false},
 			&cli.BoolFlag{Name: "watch", Usage: "watch the input dir and process new files", Required: false, Value: false},
 			&cli.BoolFlag{Name: "batch", Usage: "batch processing mode (read JSON from stdin)", Required: false, Value: false},
@@ -536,10 +536,6 @@ func (p *processor) process(inputFile string, allDec []common.DecoderFactory) er
 	// 用文件名信息包装元数据，确保标题准确性
 	if p.updateMetadata {
 		params.Meta = p.processMetadataWithFilename(params.Meta, inputFile, cachedEntry, logger)
-	} else {
-		// 即使没有启用update-metadata，也使用文件名信息生成基本元数据
-		// 这样可以保留文件名中的重要信息（如Live、Remix等标识）
-		params.Meta = common.SmartParseFilenameMeta(filepath.Base(inputFile))
 	}
 
 	if p.updateMetadata && params.Meta != nil {
