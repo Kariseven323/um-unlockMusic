@@ -508,7 +508,7 @@ class FileProcessor:
             # 开始处理
             options = {
                 "remove_source": False,
-                "update_metadata": False,
+                "update_metadata": True,  # 启用元数据更新，确保专辑名等信息正确保留
                 "overwrite_output": True,
                 "skip_noop": True,
                 "naming_format": naming_format

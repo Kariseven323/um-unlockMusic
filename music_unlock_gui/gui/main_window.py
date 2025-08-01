@@ -48,8 +48,8 @@ class MusicUnlockGUI:
         # 创建组件
         self.setup_ui()
         
-        # 初始化处理器和线程管理器（禁用服务模式，使用传统命令行模式）
-        self.processor = FileProcessor(um_exe_path, use_service_mode=False)
+        # 初始化处理器和线程管理器（启用服务模式，获得更好的性能）
+        self.processor = FileProcessor(um_exe_path, use_service_mode=True)
         self.thread_manager = ThreadManager(max_workers=DEFAULT_MAX_WORKERS)
 
         # 获取支持的格式列表
