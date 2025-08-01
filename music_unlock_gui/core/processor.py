@@ -589,7 +589,7 @@ class FileProcessor:
                 "files": [],
                 "options": {
                     "remove_source": False,
-                    "update_metadata": False,
+                    "update_metadata": True,  # 启用元数据更新，确保保留文件名中的Live等标识
                     "overwrite_output": True,
                     "skip_noop": True,
                     "naming_format": naming_format

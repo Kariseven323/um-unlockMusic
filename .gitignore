@@ -19,3 +19,5 @@ delete_flac_files.py
 
 .augment/
 __pycache__/
+
+docs/

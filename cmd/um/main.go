@@ -536,6 +536,10 @@ func (p *processor) process(inputFile string, allDec []common.DecoderFactory) er
 	// 用文件名信息包装元数据，确保标题准确性
 	if p.updateMetadata {
 		params.Meta = p.processMetadataWithFilename(params.Meta, inputFile, cachedEntry, logger)
+	} else {
+		// 即使没有启用update-metadata，也使用文件名信息生成基本元数据
+		// 这样可以保留文件名中的重要信息（如Live、Remix等标识）
+		params.Meta = common.SmartParseFilenameMeta(filepath.Base(inputFile))
 	}
 
 	if p.updateMetadata && params.Meta != nil {
