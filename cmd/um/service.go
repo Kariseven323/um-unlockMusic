@@ -637,20 +637,36 @@ func (s *UMService) processSessionFiles(sessionID string) {
 // isSupportedFormat 检查文件格式是否支持
 func (s *UMService) isSupportedFormat(ext string) bool {
 	supportedFormats := map[string]bool{
-		".ncm":  true, // 网易云音乐
-		".qmc":  true, // QQ音乐
-		".qmc0": true,
-		".qmc3": true,
-		".kgm":  true, // 酷狗音乐
-		".kgma": true,
-		".kwm":  true, // 酷我音乐
-		".tm0":  true, // 天天动听
-		".tm2":  true,
-		".tm3":  true,
-		".tm6":  true,
-		".xm":   true, // 虾米音乐
-		".x2m":  true,
-		".x3m":  true,
+		// 网易云音乐
+		".ncm": true,
+
+		// QQ音乐
+		".qmc0": true, ".qmc2": true, ".qmc3": true, ".qmc4": true, ".qmc6": true, ".qmc8": true,
+		".qmcflac": true, ".qmcogg": true, ".tkm": true,
+		".mflac": true, ".mflac0": true, ".mflac1": true, ".mflaca": true, ".mflach": true, ".mflacl": true, ".mflacm": true,
+		".mgg": true, ".mgg0": true, ".mgg1": true, ".mgga": true, ".mggh": true, ".mggl": true, ".mggm": true,
+		".mmp4": true,
+
+		// QQ音乐微云格式
+		".666c6163": true, ".6d3461": true, ".6d7033": true, ".6f6767": true, ".776176": true,
+
+		// 酷狗音乐
+		".kgm": true, ".kgma": true, ".kgg": true, ".kgm.flac": true,
+
+		// 酷我音乐
+		".kwm": true,
+
+		// 太合音乐
+		".tm0": true, ".tm2": true, ".tm3": true, ".tm6": true,
+
+		// 虾米音乐
+		".xm": true, ".x2m": true, ".x3m": true,
+
+		// Moo Music
+		".bkcmp3": true, ".bkcm4a": true, ".bkcflac": true, ".bkcwav": true, ".bkcape": true, ".bkcogg": true, ".bkcwma": true,
+
+		// 其他
+		".vpr": true, ".vpr.flac": true,
 	}
 	return supportedFormats[ext]
 }

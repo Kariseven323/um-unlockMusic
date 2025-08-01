@@ -621,8 +621,9 @@ func (bp *batchProcessor) performDecryption(data *pipelineData) error {
 		return fmt.Errorf("读取音频头部失败: %w", err)
 	}
 
-	// 确定音频格式
-	data.audioExt = sniff.AudioExtensionWithFallback(headerBuf, ".mp3")
+	// 确定音频格式 - 使用智能fallback
+	inputExt := filepath.Ext(data.task.InputPath)
+	data.audioExt = sniff.AudioExtensionWithSmartFallback(headerBuf, inputExt)
 
 	// 修复问题：完整读取音频数据到内存，避免流生命周期问题
 	header := bytes.NewReader(headerBuf)

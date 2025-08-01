@@ -492,7 +492,10 @@ func (p *processor) process(inputFile string, allDec []common.DecoderFactory) er
 	}
 	header := bytes.NewBuffer(headerBuf)
 	audio := io.MultiReader(header, dec)
-	params.AudioExt = sniff.AudioExtensionWithFallback(header.Bytes(), ".mp3")
+	// 使用智能fallback，根据输入文件扩展名推测输出格式
+	inputExt := filepath.Ext(inputFile)
+	params.AudioExt = sniff.AudioExtensionWithSmartFallback(header.Bytes(), inputExt)
+	logger.Info("format detection", zap.String("inputExt", inputExt), zap.String("detectedExt", params.AudioExt))
 
 	if p.updateMetadata {
 		if audioMetaGetter, ok := dec.(common.AudioMetaGetter); ok {

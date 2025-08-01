@@ -35,11 +35,46 @@ var audioExtensions = map[string]Sniffer{
 // AudioExtension sniffs the known audio types, and returns the file extension.
 // header is recommended to at least 16 bytes.
 func AudioExtension(header []byte) (string, bool) {
-	for ext, sniffer := range audioExtensions {
-		if sniffer.Sniff(header) {
-			return ext, true
-		}
+	// Check specific formats first to avoid false positives
+	// Order matters: more specific formats should be checked before generic ones
+
+	// Check for formats with clear magic headers first
+	if bytes.HasPrefix(header, []byte("OggS")) {
+		return ".ogg", true
 	}
+	if bytes.HasPrefix(header, []byte("fLaC")) {
+		return ".flac", true
+	}
+	if bytes.HasPrefix(header, []byte("RIFF")) {
+		return ".wav", true
+	}
+	if bytes.HasPrefix(header, []byte("FRM8")) {
+		return ".dff", true
+	}
+
+	// Check WMA format
+	wmaHeader := []byte{0x30, 0x26, 0xb2, 0x75, 0x8e, 0x66, 0xcf, 0x11, 0xa6, 0xd9, 0x00, 0xaa, 0x00, 0x62, 0xce, 0x6c}
+	if bytes.HasPrefix(header, wmaHeader) {
+		return ".wma", true
+	}
+
+	// Check M4A format
+	m4a := m4aSniffer{}
+	if m4a.Sniff(header) {
+		return ".m4a", true
+	}
+
+	// Check MP4 format
+	mp4 := &mpeg4Sniffer{}
+	if mp4.Sniff(header) {
+		return ".mp4", true
+	}
+
+	// Check MP3 last (as it can have false positives)
+	if (&mp3Sniffer{}).Sniff(header) {
+		return ".mp3", true
+	}
+
 	return "", false
 }
 
@@ -51,6 +86,33 @@ func AudioExtensionWithFallback(header []byte, fallback string) string {
 		return fallback
 	}
 	return ext
+}
+
+// AudioExtensionWithSmartFallback is like AudioExtensionWithFallback, but uses
+// intelligent fallback based on input file extension when format sniffing fails.
+func AudioExtensionWithSmartFallback(header []byte, inputExt string) string {
+	ext, ok := AudioExtension(header)
+	if !ok {
+		// Use smart fallback based on input file extension
+		return getSmartFallback(inputExt)
+	}
+	return ext
+}
+
+// getSmartFallback returns the expected output format based on input file extension
+func getSmartFallback(inputExt string) string {
+	switch inputExt {
+	case ".mgg", ".mgg0", ".mgg1", ".mgga", ".mggh", ".mggl", ".mggm":
+		return ".ogg"
+	case ".mflac", ".mflac0", ".mflac1", ".mflaca", ".mflach", ".mflacl", ".mflacm":
+		return ".flac"
+	case ".qmcflac":
+		return ".flac"
+	case ".qmcogg":
+		return ".ogg"
+	default:
+		return ".mp3" // default fallback
+	}
 }
 
 type prefixSniffer []byte

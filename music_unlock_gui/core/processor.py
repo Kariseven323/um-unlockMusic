@@ -264,18 +264,18 @@ class FileProcessor:
     def get_output_filename(self, input_file: str) -> str:
         """
         根据输入文件名推测输出文件名
-        
+
         Args:
             input_file: 输入文件路径
-            
+
         Returns:
             str: 预期的输出文件名（不含路径）
         """
         base_name = os.path.splitext(os.path.basename(input_file))[0]
-        
+
         # 根据输入格式推测输出格式
         input_ext = os.path.splitext(input_file)[1].lower()
-        
+
         if input_ext in ['.ncm']:
             # 网易云音乐通常输出为mp3或flac
             return f"{base_name}.mp3"  # 默认假设为mp3
@@ -285,6 +285,12 @@ class FileProcessor:
             return f"{base_name}.ogg"
         elif input_ext in ['.qmc', '.qmc0']:
             return f"{base_name}.mp3"  # 默认假设为mp3
+        elif input_ext.startswith('.mflac'):
+            # mflac及其变体（mflac0, mflac1, mflaca等）输出为flac
+            return f"{base_name}.flac"
+        elif input_ext.startswith('.mgg'):
+            # mgg及其变体（mgg0, mgg1, mgga等）输出为ogg
+            return f"{base_name}.ogg"
         elif input_ext in ['.kgm', '.kgma']:
             return f"{base_name}.mp3"  # 默认假设为mp3
         elif input_ext in ['.kwm']:
@@ -471,19 +477,21 @@ class FileProcessor:
         Returns:
             dict: 批处理结果
         """
-        # 智能模式选择：
-        # - 文件数量 >= 50 或者服务已经运行：使用服务模式
-        # - 文件数量 < 50 且服务未运行：使用传统模式（避免启动开销）
+        # 模式选择：如果启用了服务模式，优先使用服务模式
         file_count = len(file_list)
 
-        if self.is_service_available() and file_count >= 10:
-            # 服务可用且文件数量足够多，使用服务模式
-            return self._process_files_batch_service(file_list, output_dir, use_source_dir, naming_format)
-        elif self.use_service_mode and file_count >= 50:
-            # 文件数量很多，值得启动服务
-            self._init_service_mode()  # 重新尝试启动服务
+        if self.use_service_mode:
+            # 如果启用了服务模式，优先使用服务模式
             if self.is_service_available():
+                # 服务已可用，直接使用
                 return self._process_files_batch_service(file_list, output_dir, use_source_dir, naming_format)
+            else:
+                # 服务不可用，尝试启动服务
+                self._init_service_mode()
+                if self.is_service_available():
+                    return self._process_files_batch_service(file_list, output_dir, use_source_dir, naming_format)
+                else:
+                    self.logger.warning("服务模式启动失败，回退到传统模式")
 
         # 使用传统模式，如果失败则回退到单文件模式
         batch_result = self._process_files_batch_subprocess(file_list, output_dir, use_source_dir, naming_format)
