@@ -48,11 +48,16 @@ class FileProcessor:
         success, self.supported_extensions = self.get_supported_extensions()
         if success:
             self.logger.info(f"成功获取 {len(self.supported_extensions)} 个支持的格式")
+            # 调试：记录获取到的格式
+            self.logger.debug(f"支持的格式: {sorted(self.supported_extensions)}")
         else:
             self.logger.warning("使用默认格式列表")
 
         # 转换为集合以提高查找效率
         self.supported_extensions_set = {ext.lower() for ext in self.supported_extensions}
+
+        # 验证关键格式是否存在
+        self._validate_critical_formats()
 
         # 初始化服务模式
         if self.use_service_mode:
@@ -143,10 +148,31 @@ class FileProcessor:
         Returns:
             bool: 是否支持
         """
+        if not file_path:
+            self.logger.warning("文件路径为空")
+            return False
+
         file_ext = os.path.splitext(file_path)[1].lower()
 
+        if not file_ext:
+            self.logger.warning(f"文件无扩展名: {file_path}")
+            return False
+
         # 使用动态获取的支持格式列表
-        return file_ext in self.supported_extensions_set
+        is_supported = file_ext in self.supported_extensions_set
+
+        # 调试日志：记录格式检查结果
+        if not is_supported:
+            self.logger.debug(f"不支持的格式: {file_ext}, 文件: {os.path.basename(file_path)}")
+            self.logger.debug(f"当前支持的格式数量: {len(self.supported_extensions_set)}")
+            # 检查是否是相似的格式
+            similar_formats = [ext for ext in self.supported_extensions_set if file_ext in ext or ext in file_ext]
+            if similar_formats:
+                self.logger.debug(f"相似的支持格式: {similar_formats}")
+        else:
+            self.logger.debug(f"支持的格式: {file_ext}, 文件: {os.path.basename(file_path)}")
+
+        return is_supported
     
     def process_file(self, input_file: str, output_dir: str = None,
                     progress_callback=None, use_source_dir: bool = False,
@@ -303,6 +329,8 @@ class FileProcessor:
             Tuple[bool, list]: (是否成功, 扩展名列表)
         """
         try:
+            self.logger.debug(f"尝试获取支持格式，um.exe路径: {self.um_exe_path}")
+
             result = subprocess.run(
                 [self.um_exe_path, '--supported-ext'],
                 capture_output=True,
@@ -317,7 +345,10 @@ class FileProcessor:
                 # 解析输出获取支持的扩展名
                 # 输出格式为 "扩展名: 数量"，需要提取扩展名部分
                 extensions = []
-                for line in result.stdout.split('\n'):
+                raw_output_lines = result.stdout.split('\n')
+                self.logger.debug(f"um.exe输出行数: {len(raw_output_lines)}")
+
+                for line in raw_output_lines:
                     line = line.strip()
                     if line and ':' in line:
                         ext = line.split(':')[0].strip()
@@ -328,13 +359,30 @@ class FileProcessor:
                             extensions.append(ext)
 
                 self.logger.info(f"从um.exe获取到 {len(extensions)} 个支持的格式")
+
+                # 验证关键格式是否存在
+                critical_formats = ['.mgg', '.ncm', '.qmc0', '.kgm']
+                missing_formats = [fmt for fmt in critical_formats if fmt not in extensions]
+                if missing_formats:
+                    self.logger.warning(f"缺少关键格式: {missing_formats}")
+                else:
+                    self.logger.debug("所有关键格式都已获取")
+
                 return True, extensions
             else:
-                self.logger.warning(f"um.exe --supported-ext 命令失败: {result.stderr}")
+                self.logger.warning(f"um.exe --supported-ext 命令失败 (返回码: {result.returncode})")
+                self.logger.warning(f"stderr: {result.stderr}")
+                self.logger.warning(f"stdout: {result.stdout}")
                 return False, self._get_default_extensions()
 
+        except subprocess.TimeoutExpired:
+            self.logger.error(f"获取支持格式超时 (>{UM_COMMAND_TIMEOUT}秒)")
+            return False, self._get_default_extensions()
+        except FileNotFoundError:
+            self.logger.error(f"um.exe文件不存在: {self.um_exe_path}")
+            return False, self._get_default_extensions()
         except Exception as e:
-            self.logger.warning(f"获取支持的扩展名失败: {str(e)}")
+            self.logger.error(f"获取支持的扩展名失败: {str(e)}")
             return False, self._get_default_extensions()
 
     def _get_default_extensions(self) -> list:
@@ -344,7 +392,50 @@ class FileProcessor:
         Returns:
             list: 默认扩展名列表
         """
-        return DEFAULT_SUPPORTED_EXTENSIONS.copy()
+        default_exts = DEFAULT_SUPPORTED_EXTENSIONS.copy()
+        self.logger.info(f"使用默认格式列表，包含 {len(default_exts)} 个格式")
+        return default_exts
+
+    def _validate_critical_formats(self):
+        """
+        验证关键格式是否存在于支持列表中
+        """
+        critical_formats = ['.mgg', '.ncm', '.qmc0', '.kgm', '.mflac']
+        missing_formats = []
+
+        for fmt in critical_formats:
+            if fmt not in self.supported_extensions_set:
+                missing_formats.append(fmt)
+
+        if missing_formats:
+            self.logger.warning(f"关键格式缺失: {missing_formats}")
+            self.logger.warning(f"当前支持格式: {sorted(list(self.supported_extensions_set))}")
+        else:
+            self.logger.debug(f"所有关键格式都已加载: {critical_formats}")
+
+    def debug_format_support(self, file_path: str) -> dict:
+        """
+        调试格式支持情况
+
+        Args:
+            file_path: 文件路径
+
+        Returns:
+            dict: 调试信息
+        """
+        file_ext = os.path.splitext(file_path)[1].lower()
+
+        debug_info = {
+            'file_path': file_path,
+            'file_ext': file_ext,
+            'is_supported': file_ext in self.supported_extensions_set,
+            'total_supported_formats': len(self.supported_extensions_set),
+            'supported_formats': sorted(list(self.supported_extensions_set)),
+            'similar_formats': [ext for ext in self.supported_extensions_set
+                              if file_ext in ext or ext in file_ext]
+        }
+
+        return debug_info
 
     def _determine_output_dir(self, input_file: str, output_dir: str = None,
                              use_source_dir: bool = False) -> str:
@@ -394,8 +485,33 @@ class FileProcessor:
             if self.is_service_available():
                 return self._process_files_batch_service(file_list, output_dir, use_source_dir, naming_format)
 
-        # 使用传统模式
-        return self._process_files_batch_subprocess(file_list, output_dir, use_source_dir, naming_format)
+        # 使用传统模式，如果失败则回退到单文件模式
+        batch_result = self._process_files_batch_subprocess(file_list, output_dir, use_source_dir, naming_format)
+
+        # 检查是否因为ffmpeg问题导致批处理失败
+        has_ffmpeg_error = False
+
+        # 检查整体错误信息
+        if batch_result.get('error'):
+            error_msg = str(batch_result.get('error', '')).lower()
+            if 'ffmpeg' in error_msg:
+                has_ffmpeg_error = True
+
+        # 检查各个文件的错误信息
+        if not has_ffmpeg_error:
+            for result in batch_result.get('results', []):
+                if not result.get('success', True):
+                    file_error = str(result.get('error', '')).lower()
+                    if 'ffmpeg' in file_error:
+                        has_ffmpeg_error = True
+                        break
+
+        # 如果检测到ffmpeg错误，回退到单文件模式
+        if has_ffmpeg_error:
+            self.logger.warning("批处理因ffmpeg问题失败，回退到单文件处理模式")
+            return self._process_files_individual(file_list, output_dir, use_source_dir, naming_format)
+
+        return batch_result
 
     def _process_files_batch_service(self, file_list: list, output_dir: str = None,
                                    use_source_dir: bool = False, naming_format: str = "auto") -> dict:
@@ -570,3 +686,67 @@ class FileProcessor:
                 "error": error_msg,
                 "results": []
             }
+
+    def _process_files_individual(self, file_list: list, output_dir: str = None,
+                                use_source_dir: bool = False, naming_format: str = "auto") -> dict:
+        """
+        使用单文件模式逐个处理文件（ffmpeg不可用时的回退方案）
+        """
+        import time
+        start_time = time.time()
+
+        results = []
+        success_count = 0
+        failed_count = 0
+
+        self.logger.info(f"开始单文件模式处理 {len(file_list)} 个文件")
+
+        for file_path in file_list:
+            try:
+                file_start_time = time.time()
+
+                success, message = self.process_file(
+                    file_path,
+                    output_dir=output_dir,
+                    use_source_dir=use_source_dir,
+                    naming_format=naming_format
+                )
+
+                file_time = int((time.time() - file_start_time) * 1000)
+
+                result = {
+                    "input_path": file_path,
+                    "success": success,
+                    "process_time_ms": file_time
+                }
+
+                if success:
+                    success_count += 1
+                    result["message"] = message
+                else:
+                    failed_count += 1
+                    result["error"] = message
+
+                results.append(result)
+
+            except Exception as e:
+                failed_count += 1
+                results.append({
+                    "input_path": file_path,
+                    "success": False,
+                    "error": f"处理异常: {str(e)}",
+                    "process_time_ms": 0
+                })
+
+        total_time = int((time.time() - start_time) * 1000)
+
+        self.logger.info(f"单文件模式处理完成: 成功 {success_count}, 失败 {failed_count}, 耗时 {total_time}ms")
+
+        return {
+            "success": success_count > 0,
+            "success_count": success_count,
+            "failed_count": failed_count,
+            "total_files": len(file_list),
+            "results": results,
+            "total_time_ms": total_time
+        }

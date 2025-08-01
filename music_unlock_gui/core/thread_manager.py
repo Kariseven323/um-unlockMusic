@@ -360,13 +360,23 @@ class ThreadManager:
                 if response.get('success', True):
                     # 发送每个文件的结果
                     for result in response.get('results', []):
-                        message_queue.put({
-                            'type': 'file_complete',
-                            'file_path': result.get('input_path', ''),
-                            'success': result.get('success', False),
-                            'error': result.get('error', ''),
-                            'process_time': result.get('process_time_ms', 0)
-                        })
+                        file_path = result.get('input_path', '')
+                        success = result.get('success', False)
+
+                        if success:
+                            message_queue.put({
+                                'type': 'success',
+                                'file_path': file_path,
+                                'message': result.get('message', '转换成功')
+                            })
+                        else:
+                            error_msg = result.get('error', '未知错误')
+                            message_queue.put({
+                                'type': 'error',
+                                'file_path': file_path,
+                                'message': error_msg
+                            })
+                            self.logger.error(f"文件处理失败: {file_path}, 错误: {error_msg}")
 
                     # 发送完成消息
                     message_queue.put({

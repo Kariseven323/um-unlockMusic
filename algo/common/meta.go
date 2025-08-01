@@ -132,6 +132,15 @@ func SmartParseFilenameMeta(filename string) AudioMeta {
 		return &filenameMeta{}
 	}
 
+	// 预处理：如果包含 "_" 分隔符，只取第一部分进行解析
+	// 这样可以排除额外信息的干扰，专注于 "歌曲名 - 歌手名" 部分的识别
+	if strings.Contains(partName, "_") {
+		underscoreParts := strings.Split(partName, "_")
+		if len(underscoreParts) > 0 && strings.TrimSpace(underscoreParts[0]) != "" {
+			partName = strings.TrimSpace(underscoreParts[0])
+		}
+	}
+
 	items := strings.Split(partName, "-")
 	ret := &filenameMeta{}
 
