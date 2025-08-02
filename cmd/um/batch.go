@@ -577,7 +577,7 @@ func (bp *batchProcessor) performDecryption(data *pipelineData) error {
 		return fmt.Errorf("读取音频数据失败: %w", err)
 	}
 
-	// 处理元数据
+	// 处理元数据（只有在真正需要时才处理）
 	if bp.baseProcessor.updateMetadata {
 		// 创建元数据处理上下文
 		ctx, cancel := context.WithTimeout(context.Background(), metadataTimeout)
@@ -740,16 +740,38 @@ func (bp *batchProcessor) performWrite(data *pipelineData) error {
 			}
 		}
 
-		params := &ffmpeg.UpdateMetadataParams{
-			Audio:       audioFilePath,
-			AudioExt:    data.audioExt,
-			Meta:        data.metadata,
-			AlbumArt:    data.albumArt,
-			AlbumArtExt: data.albumArtExt,
-		}
+		// 检查是否真的有元数据需要处理（与单文件模式保持一致）
+		if data.metadata == nil || (data.metadata.GetTitle() == "" && len(data.metadata.GetArtists()) == 0 && data.metadata.GetAlbum() == "" && len(data.albumArt) == 0) {
+			// 没有有效元数据，直接复制音频文件
+			if err := bp.baseProcessor.copyAudioFile(data.outputPath, bytes.NewReader(data.audioData)); err != nil {
+				return fmt.Errorf("直接复制音频文件失败: %w", err)
+			}
+		} else {
+			// 有元数据，尝试使用ffmpeg处理
+			params := &ffmpeg.UpdateMetadataParams{
+				Audio:       audioFilePath,
+				AudioExt:    data.audioExt,
+				Meta:        data.metadata,
+				AlbumArt:    data.albumArt,
+				AlbumArtExt: data.albumArtExt,
+			}
 
-		if err := ffmpeg.UpdateMeta(ctx, data.outputPath, params, bp.logger); err != nil {
-			return fmt.Errorf("更新元数据失败: %w", err)
+			if err := ffmpeg.UpdateMeta(ctx, data.outputPath, params, bp.logger); err != nil {
+				// 检查是否是ffmpeg不可用的错误，如果是则降级到直接复制模式
+				if bp.baseProcessor.isFFmpegUnavailableError(err) {
+					bp.logger.Warn("ffmpeg不可用，降级到直接复制模式",
+						zap.String("文件", data.task.InputPath),
+						zap.Error(err))
+
+					// 降级到直接复制模式
+					if err := bp.baseProcessor.copyAudioFile(data.outputPath, bytes.NewReader(data.audioData)); err != nil {
+						return fmt.Errorf("降级复制失败: %w", err)
+					}
+				} else {
+					// 其他ffmpeg错误不进行降级
+					return fmt.Errorf("更新元数据失败: %w", err)
+				}
+			}
 		}
 	}
 

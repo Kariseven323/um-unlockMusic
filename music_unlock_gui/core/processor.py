@@ -115,7 +115,7 @@ class FileProcessor:
     def _setup_logger(self) -> logging.Logger:
         """设置日志记录器"""
         logger = logging.getLogger('FileProcessor')
-        logger.setLevel(logging.INFO)
+        logger.setLevel(logging.DEBUG)  # 改为DEBUG级别以获取更多信息
 
         if not logger.handlers:
             handler = logging.StreamHandler()
@@ -191,6 +191,9 @@ class FileProcessor:
             Tuple[bool, str]: (是否成功, 错误信息或成功信息)
         """
         try:
+            # 设置工作目录为um.exe所在目录，避免路径解析问题
+            um_exe_dir = os.path.dirname(os.path.abspath(self.um_exe_path))
+
             # 检查输入文件是否存在
             if not os.path.exists(input_file):
                 return False, ERROR_MESSAGES['file_not_found'].format(input_file)
@@ -204,7 +207,7 @@ class FileProcessor:
 
             # 确保输出目录存在
             os.makedirs(actual_output_dir, exist_ok=True)
-            
+
             # 构建命令行参数
             cmd = [
                 self.um_exe_path,
@@ -214,15 +217,19 @@ class FileProcessor:
                 '--overwrite',  # 覆盖已存在的文件
                 '--verbose'     # 详细输出
             ]
-            
+
             self.logger.info(f"开始处理文件: {input_file}")
             self.logger.debug(f"执行命令: {' '.join(cmd)}")
-            
+            self.logger.debug(f"工作目录: {um_exe_dir}")
+            self.logger.debug(f"输入文件绝对路径: {os.path.abspath(input_file)}")
+            self.logger.debug(f"输出目录绝对路径: {os.path.abspath(actual_output_dir)}")
+
             # 调用进度回调
             if progress_callback:
                 progress_callback(10)  # 开始处理
-            
+
             # 执行um.exe
+
             result = subprocess.run(
                 cmd,
                 capture_output=True,
@@ -230,6 +237,7 @@ class FileProcessor:
                 encoding='utf-8',
                 errors='ignore',
                 timeout=PROCESS_TIMEOUT_SECONDS,
+                cwd=um_exe_dir,  # 添加工作目录设置
                 **self._get_subprocess_kwargs()
             )
             
@@ -241,13 +249,29 @@ class FileProcessor:
             if result.returncode == 0:
                 success_msg = SUCCESS_MESSAGES['conversion_success'].format(os.path.basename(input_file))
                 self.logger.info(success_msg)
-                
+
                 if progress_callback:
                     progress_callback(100)  # 完成
-                
+
                 return True, success_msg
             else:
-                error_msg = ERROR_MESSAGES['conversion_failed'].format(result.stderr or result.stdout or '未知错误')
+                # 详细的错误信息记录
+                self.logger.error(f"um.exe执行失败，返回码: {result.returncode}")
+                self.logger.error(f"标准输出: {result.stdout}")
+                self.logger.error(f"错误输出: {result.stderr}")
+                self.logger.error(f"执行命令: {' '.join(cmd)}")
+                self.logger.error(f"工作目录: {um_exe_dir}")
+
+                # 检查常见问题
+                if "no suitable decoder" in (result.stderr or result.stdout or "").lower():
+                    error_msg = f"未找到适合的解码器处理文件: {os.path.basename(input_file)}"
+                elif "permission denied" in (result.stderr or result.stdout or "").lower():
+                    error_msg = f"权限不足，无法处理文件: {os.path.basename(input_file)}"
+                elif "file not found" in (result.stderr or result.stdout or "").lower():
+                    error_msg = f"文件未找到: {os.path.basename(input_file)}"
+                else:
+                    error_msg = ERROR_MESSAGES['conversion_failed'].format(result.stderr or result.stdout or '未知错误')
+
                 self.logger.error(f"处理文件失败: {input_file}, 错误: {error_msg}")
                 return False, error_msg
 
@@ -306,6 +330,7 @@ class FileProcessor:
             Tuple[bool, str]: (是否可用, 版本信息或错误信息)
         """
         try:
+            um_exe_dir = os.path.dirname(os.path.abspath(self.um_exe_path))
             result = subprocess.run(
                 [self.um_exe_path, '--version'],
                 capture_output=True,
@@ -313,6 +338,7 @@ class FileProcessor:
                 encoding='utf-8',
                 errors='ignore',
                 timeout=10,
+                cwd=um_exe_dir,
                 **self._get_subprocess_kwargs()
             )
             
@@ -337,6 +363,7 @@ class FileProcessor:
         try:
             self.logger.debug(f"尝试获取支持格式，um.exe路径: {self.um_exe_path}")
 
+            um_exe_dir = os.path.dirname(os.path.abspath(self.um_exe_path))
             result = subprocess.run(
                 [self.um_exe_path, '--supported-ext'],
                 capture_output=True,
@@ -344,6 +371,7 @@ class FileProcessor:
                 encoding='utf-8',
                 errors='ignore',
                 timeout=UM_COMMAND_TIMEOUT,
+                cwd=um_exe_dir,
                 **self._get_subprocess_kwargs()
             )
 
@@ -610,6 +638,7 @@ class FileProcessor:
             # 调用批处理模式
             cmd = [self.um_exe_path, "--batch"]
 
+            um_exe_dir = os.path.dirname(os.path.abspath(self.um_exe_path))
             result = subprocess.run(
                 cmd,
                 input=json.dumps(batch_request),
@@ -618,6 +647,7 @@ class FileProcessor:
                 encoding='utf-8',
                 errors='ignore',
                 timeout=PROCESS_TIMEOUT_SECONDS * len(file_list),  # 根据文件数量调整超时
+                cwd=um_exe_dir,
                 **self._get_subprocess_kwargs()
             )
 

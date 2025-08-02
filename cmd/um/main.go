@@ -574,26 +574,59 @@ func (p *processor) process(inputFile string, allDec []common.DecoderFactory) er
 	}
 
 	if params.Meta == nil {
-		outFile, err := os.OpenFile(outPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
-		if err != nil {
-			return err
-		}
-		defer outFile.Close()
-
-		if _, err := utils.OptimizedCopy(outFile, audio); err != nil {
+		// 直接复制音频文件，无需元数据处理
+		if err := p.copyAudioFile(outPath, audio); err != nil {
 			return err
 		}
 	} else {
+		// 尝试使用ffmpeg处理元数据
 		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 		defer cancel()
 
 		if err := ffmpeg.UpdateMeta(ctx, outPath, params, logger); err != nil {
-			return err
+			// 检查是否是ffmpeg不可用的错误
+			if p.isFFmpegUnavailableError(err) {
+				logger.Warn("ffmpeg不可用，降级到直接复制模式", zap.Error(err))
+				// 降级到直接复制模式
+				if err := p.copyAudioFile(outPath, audio); err != nil {
+					return fmt.Errorf("降级复制失败: %w", err)
+				}
+			} else {
+				// 其他ffmpeg错误不进行降级
+				return err
+			}
 		}
 	}
 
 	logger.Info("successfully converted", zap.String("source", inputFile), zap.String("destination", outPath))
 	return nil
+}
+
+// copyAudioFile 直接复制音频文件到输出路径
+func (p *processor) copyAudioFile(outPath string, audio io.Reader) error {
+	outFile, err := os.OpenFile(outPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	if err != nil {
+		return err
+	}
+	defer outFile.Close()
+
+	if _, err := utils.OptimizedCopy(outFile, audio); err != nil {
+		return err
+	}
+	return nil
+}
+
+// isFFmpegUnavailableError 检查错误是否是由于ffmpeg不可用导致的
+func (p *processor) isFFmpegUnavailableError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	// 检查错误信息中是否包含ffmpeg可执行文件不存在的关键词
+	errStr := strings.ToLower(err.Error())
+	return strings.Contains(errStr, "executable file not found") ||
+		(strings.Contains(errStr, "ffmpeg") && strings.Contains(errStr, "not found")) ||
+		strings.Contains(errStr, "no such file or directory")
 }
 
 // processMetadataWithFilename 处理元数据并用文件名信息包装
